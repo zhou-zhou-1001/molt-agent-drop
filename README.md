@@ -2,6 +2,30 @@
 
 这是一个真实可演示、但非生产级的跨机器 Agent Drop。Host 只监听 `127.0.0.1`；跨机器连接必须由用户显式建立 SSH tunnel。Python 3 标准库，无第三方依赖。
 
+## 小白从这里开始：终端向导
+
+不要先读完整文档。Host 和 Agent 都可以先运行向导：
+
+```powershell
+git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
+cd molt-agent-drop
+.\molt.ps1
+```
+
+向导会先问你是哪一端：
+
+- **Host**：选择专用共享目录，自动准备已校验的 Python，启动 Host，并显示一次性 invitation。
+- **Agent**：输入 Host 给你的 invitation，发起配对；Host Owner 仍必须明确批准 request id。
+
+向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。两台电脑之间仍需先按 [跨机器步骤](docs/demo-cross-machine.md) 建立已核验的 SSH tunnel。向导是 Demo 的友好入口，不是生产安装器。
+
+如果 PowerShell 阻止本地脚本，**不要**为了运行它而降低全局执行策略；请在当前终端临时使用：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\\molt.ps1
+```
+
 ## 自动获取 Python（bootstrap）
 
 目标机没有 Python 也不怕：`bootstrap_python.ps1` 会自动检测 `py`/`python`，没有则下载**固定版本**（默认 3.13.15 amd64）官方 embeddable 包到私有目录（`%LOCALAPPDATA%\MoltDropDemo\runtime`），**强制 SHA-256 校验**（多源 fallback：npmmirror → 华为云 → python.org，任一源下载后哈希不符即删除并换源，全部失败则 fail-closed），解压后修正 `python._pth` 并自检标准库，幂等（已验证的 runtime 直接复用）。不改 PATH、不写注册表、不做全局安装。
