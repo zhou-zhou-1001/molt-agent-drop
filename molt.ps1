@@ -54,6 +54,10 @@ if ($Role -eq 'host') {
   $ok = Ask 'Create/use this dedicated directory and start Host? Type yes' 'no'
   if ($ok -ne 'yes') { Write-Host 'Cancelled.'; exit 0 }
   Header 'Host starting'
+  if (-not $EnableDiagnostics) {
+    $diagAns = Ask 'Enable structured diagnostics (default No)? Type yes to enable' 'no'
+    if ($diagAns -eq 'yes') { $EnableDiagnostics = $true }
+  }
   Write-Host 'After startup, transfer MOLT_INVITATION_ID and SECRET to the Agent operator through a trusted channel.' -ForegroundColor Green
   Write-Host 'Host listens only on 127.0.0.1; next, create a verified SSH tunnel as documented.' -ForegroundColor Yellow
   $hostArgs = @('-Root', $Root, '-StateDir', $StateDir, '-Port', $Port)

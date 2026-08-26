@@ -77,6 +77,8 @@ def _run_fixed_diagnostic(argv,cwd,on_started=None,on_finished=None):
     if reader.is_alive():
         # A descendant retaining stdout cannot make completion unbounded; fail closed.
         proc.stdout.close();reader.join(timeout=1);truncated[0]=True
+    else:
+        proc.stdout.close()
     output=_redact_diagnostic_text(b"".join(chunks).decode("utf-8",errors="replace"))
     if on_finished:on_finished(proc)
     return {"exit_code":proc.returncode,"output":output,"timed_out":timed_out,"truncated":truncated[0]}

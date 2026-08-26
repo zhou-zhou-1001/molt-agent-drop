@@ -1,7 +1,8 @@
-import json, os, tempfile, threading, time, unittest, urllib.error, urllib.parse, urllib.request
+import json, os, subprocess, tempfile, threading, time, unittest, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 from http.server import ThreadingHTTPServer
 from drop_host import Handler, HostState, consume_owner_cmd_file, validate_owner_cmd_path, validate_root
+import drop_host as drop_host_module
 
 class DropTests(unittest.TestCase):
     def setUp(self):
@@ -99,5 +100,68 @@ class DropTests(unittest.TestCase):
         self.host.approve(rid);first=self.host.pair_result(rid,self.host.invite_secret);token=first["token"]
         self.assertEqual({"status":"delivered"},self.host.pair_result(rid,self.host.invite_secret))
         self.assertEqual("active",self.host.session_status(token));self.host.revoke();self.assertEqual("revoked",self.host.session_status(token))
+
+class DropDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();base=Path(self.tmp.name)
+        self.root=base/"shared";self.root.mkdir();self.state=base/"private"
+        self.host=HostState(self.root,self.state,1,1,enable_diagnostics=True);self.token=None
+    def tearDown(self):
+        self.host.revoke()
+        self.tmp.cleanup()
+    def _pair(self):
+        rid=self.host.request_pair(self.host.invite_id,self.host.invite_secret,"diag-test")
+        self.host.approve(rid);self.token=self.host.pair_result(rid,self.host.invite_secret)["token"]
+    def _wait_terminal(self,rid,limit=8):
+        deadline=time.monotonic()+limit;status=None
+        while time.monotonic()<deadline:
+            status=self.host.diagnostic_result(rid,self.token)["status"]
+            if status in ("completed","failed","blocked","denied"):break
+            time.sleep(0.05)
+        return status
+    def test_diagnostics_disabled_by_default(self):
+        host=HostState(self.root,self.state,1,1)
+        with self.assertRaises(PermissionError):host.request_diagnostic("system.identity",{},"x")
+    def test_request_requires_active_session(self):
+        with self.assertRaises(PermissionError):self.host.request_diagnostic("system.identity",{},"bogus")
+    def test_request_rejects_unknown_command_or_args(self):
+        self._pair()
+        with self.assertRaises(ValueError):self.host.request_diagnostic("not-a-command",{},self.token)
+        with self.assertRaises(ValueError):self.host.request_diagnostic("system.identity",{"x":1},self.token)
+    def test_approve_runs_and_completes(self):
+        self._pair();rid=self.host.request_diagnostic("system.identity",{},self.token)
+        self.host.approve_diagnostic(rid);self.assertEqual("completed",self._wait_terminal(rid))
+        result=self.host.diagnostic_result(rid,self.token)["result"]
+        self.assertEqual(0,result["exit_code"]);self.assertTrue(result["output"].strip())
+    def test_deny_stays_denied(self):
+        self._pair();rid=self.host.request_diagnostic("system.identity",{},self.token)
+        self.host.deny_diagnostic(rid)
+        self.assertEqual("denied",self.host.diagnostic_result(rid,self.token)["status"])
+    def test_approve_after_revoke_or_freeze_fails_closed(self):
+        self._pair();rid=self.host.request_diagnostic("system.identity",{},self.token)
+        self.host.revoke()
+        with self.assertRaises(ValueError):self.host.approve_diagnostic(rid)
+    def test_approve_after_freeze_fails_closed(self):
+        self._pair();rid=self.host.request_diagnostic("system.identity",{},self.token)
+        self.host.freeze()
+        with self.assertRaises(ValueError):self.host.approve_diagnostic(rid)
+    def test_session_binding_tamper_fails_closed(self):
+        self._pair();rid=self.host.request_diagnostic("system.identity",{},self.token)
+        self.host.diagnostic_requests[rid]["session_hash"]="tampered"
+        with self.assertRaises(ValueError):self.host.approve_diagnostic(rid)
+    def test_timeout_kills_process_tree(self):
+        old=drop_host_module.DIAGNOSTIC_TIMEOUT_SECONDS
+        drop_host_module.DIAGNOSTIC_TIMEOUT_SECONDS=1
+        try:result=drop_host_module._run_fixed_diagnostic(("/bin/sleep","5"),self.state)
+        finally:drop_host_module.DIAGNOSTIC_TIMEOUT_SECONDS=old
+        self.assertTrue(result["timed_out"])
+    def test_redaction_removes_secrets(self):
+        self.assertIn("[REDACTED]",drop_host_module._redact_diagnostic_text("apiKey=sk-abcdefghijklmnopqrstuvwxyz0123456789"))
+        self.assertIn("[REDACTED]",drop_host_module._redact_diagnostic_text("Authorization: Bearer deadbeef"))
+        self.assertIn("[REDACTED]",drop_host_module._redact_diagnostic_text("prefix xyzabcdefghijklmnopqrstuvwxyz0123456789 suffix"))
+    def test_terminate_diagnostic_process(self):
+        proc=subprocess.Popen(("/bin/sleep","30"),start_new_session=True)
+        drop_host_module._terminate_diagnostic_process(proc)
+        self.assertIsNotNone(proc.wait(timeout=5))
 
 if __name__=="__main__":unittest.main(verbosity=2)

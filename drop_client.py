@@ -23,7 +23,7 @@ def main():
     ls=sub.add_parser("list");ls.add_argument("path",nargs="?",default=".")
     read=sub.add_parser("read");read.add_argument("path")
     create=sub.add_parser("create");create.add_argument("path");create.add_argument("--content",required=True)
-    diag=sub.add_parser("diagnostic-request");diag.add_argument("command",choices=("system.identity","openclaw.which","openclaw.version","wsl.status","network.check"))
+    diag=sub.add_parser("diagnostic-request");diag.add_argument("command",choices=("system.identity","openclaw.which","openclaw.version","wsl.status","network.check"));diag.add_argument("--wait",type=int,default=60)
     ds=sub.add_parser("diagnostic-status");ds.add_argument("request_id")
     a=p.parse_args();c=Client(a.url,a.token)
     if a.op=="pair":
@@ -34,7 +34,15 @@ def main():
             if result["status"]=="approved":print("MOLT_SESSION_TOKEN="+result["token"]);print("Copy the complete token above; do not use a visually truncated value.");return
             if result["status"]!="pending":raise SystemExit("Pairing "+result["status"])
         raise SystemExit("Timed out waiting for owner approval")
-    if a.op=="diagnostic-request":result=c.call("POST","/diagnostics/request",{"command":a.command,"args":{}})
+    if a.op=="diagnostic-request":
+        result=c.call("POST","/diagnostics/request",{"command":a.command,"args":{}});rid=result["request_id"];print("Diagnostic pending owner approval: "+rid,flush=True)
+        if a.wait<=0:print(json.dumps(result,ensure_ascii=False,indent=2));return
+        deadline=time.monotonic()+a.wait
+        while time.monotonic()<deadline:
+            time.sleep(1);result=c.call("POST","/diagnostics/status",{"request_id":rid})
+            if result["status"] in ("completed","failed","blocked","denied"):
+                print(json.dumps(result,ensure_ascii=False,indent=2));return
+        raise SystemExit("Timed out waiting for diagnostic completion")
     elif a.op=="diagnostic-status":result=c.call("POST","/diagnostics/status",{"request_id":a.request_id})
     else:
         query=lambda path:"?"+urllib.parse.urlencode({"path":path})

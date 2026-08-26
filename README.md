@@ -79,12 +79,14 @@ approve-diagnostic DIAGNOSTIC_REQUEST_ID
 deny-diagnostic DIAGNOSTIC_REQUEST_ID
 ```
 
-Agent 端可使用固定 catalog 命令（仅空参数）：
+Agent 端可使用固定 catalog 命令（仅空参数）；`--wait` 默认等待 Owner 批准并轮询到终态：
 
 ```powershell
 py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN diagnostic-request system.identity
 py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN diagnostic-status DIAGNOSTIC_REQUEST_ID
 ```
+
+Windows 向导（`molt.ps1`）在 Host 启动前会显式询问是否启用结构化诊断，默认 No；也可用 `molt.ps1 -Role host -EnableDiagnostics` 直接启用。
 
 Host 控制台出现 request id 后，owner 必须现场输入：
 
