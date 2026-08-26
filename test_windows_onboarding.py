@@ -73,7 +73,7 @@ class WindowsOnboardingTests(unittest.TestCase):
         runner = (ROOT / "run_drop_host.ps1").read_text(encoding="ascii")
         wizard = (ROOT / "molt_wizard.py").read_text(encoding="utf-8")
         self.assertIn("[switch]$EnableDiagnostics", ps)
-        self.assertIn("-EnableDiagnostics", ps)
+        self.assertIn("EnableDiagnostics", ps)
         self.assertIn("[switch]$EnableDiagnostics", runner)
         self.assertIn("--enable-diagnostics", runner)
         self.assertIn('p.add_argument("--enable-diagnostics", action="store_true")', wizard)

@@ -60,9 +60,9 @@ if ($Role -eq 'host') {
   }
   Write-Host 'After startup, transfer MOLT_INVITATION_ID and SECRET to the Agent operator through a trusted channel.' -ForegroundColor Green
   Write-Host 'Host listens only on 127.0.0.1; next, create a verified SSH tunnel as documented.' -ForegroundColor Yellow
-  $hostArgs = @('-Root', $Root, '-StateDir', $StateDir, '-Port', $Port)
-  if ($EnableDiagnostics) { $hostArgs += '-EnableDiagnostics' }
-  & (Join-Path $here 'run_drop_host.ps1') @hostArgs
+  $hostParams = @{ Root = $Root; StateDir = $StateDir; Port = $Port }
+  if ($EnableDiagnostics) { $hostParams.EnableDiagnostics = $true }
+  & (Join-Path $here 'run_drop_host.ps1') @hostParams
   exit $LASTEXITCODE
 }
 
