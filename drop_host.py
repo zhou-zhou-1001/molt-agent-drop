@@ -50,8 +50,8 @@ class HostState:
         if not self.state_dir.is_dir(): raise ValueError("state directory must be a directory")
         try: os.chmod(self.state_dir,0o700)
         except OSError: pass
-        self.audit_path=self.state_dir/"audit.jsonl"; self.invite_id=secrets.token_urlsafe(18); self.invite_secret=secrets.token_urlsafe(32)
-        self.invite_hash=digest(self.invite_secret); self.invite_deadline=time.monotonic()+invite_ttl*60; self.session_ttl=session_ttl*60
+        self.audit_path=self.state_dir/"audit.jsonl"; self.invite_ttl=invite_ttl*60; self.invite_id=secrets.token_urlsafe(18); self.invite_secret=secrets.token_urlsafe(32)
+        self.invite_hash=digest(self.invite_secret); self.invite_deadline=time.monotonic()+self.invite_ttl; self.session_ttl=session_ttl*60
         self.pending={}; self.invite_consumed=False; self.claimed_request_id=None; self.token_hash=None; self.session_deadline=None
         self.revoked=False; self.frozen=False; self.lock=threading.RLock(); self.server=None; self.stopping=False
         self.audit("host_start","system","allowed",{"root":str(self.root)})
@@ -99,6 +99,17 @@ class HostState:
             item=self.pending.get(rid)
             if not item or item["status"]!="pending": raise ValueError("no pending request")
             self.audit("approval",rid,"denied"); item["status"]="denied"
+
+    def new_invite(self):
+        with self.lock:
+            invite_id=secrets.token_urlsafe(18); invite_secret=secrets.token_urlsafe(32)
+            self.audit("invitation_create","owner","allowed",{"ttl_seconds":self.invite_ttl})
+            for item in self.pending.values():
+                if item["status"]=="pending": item["status"]="superseded"
+            self.invite_id=invite_id; self.invite_secret=invite_secret; self.invite_hash=digest(invite_secret)
+            self.invite_deadline=time.monotonic()+self.invite_ttl
+            self.invite_consumed=False; self.claimed_request_id=None
+            return invite_id,invite_secret
 
     def pair_result(self,rid,secret):
         with self.lock:
@@ -207,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:self.reply(503,{"error":"host state or filesystem operation failed"})
 
 def owner_console(host):
-    print("Owner commands: approve REQUEST_ID | deny REQUEST_ID | revoke | freeze | status",flush=True)
+    print("Owner commands: approve REQUEST_ID | deny REQUEST_ID | new-invite | revoke | freeze | status",flush=True)
     while not host.stopping:
         try:line=input("molt-owner> ").strip()
         except EOFError:return
@@ -215,6 +226,7 @@ def owner_console(host):
             cmd,_,arg=line.partition(" ")
             if cmd=="approve":host.approve(arg);print("Approved. Agent may retrieve one session token.",flush=True)
             elif cmd=="deny":host.deny(arg);print("Denied.",flush=True)
+            elif cmd=="new-invite":print_invitation(host)
             elif cmd=="revoke":host.revoke();print("Revoked.",flush=True)
             elif cmd=="freeze":host.frozen=True;host.audit("freeze","session","allowed");print("Frozen.",flush=True)
             elif cmd=="status":print(json.dumps({k:v["status"] for k,v in host.pending.items()}),flush=True)
@@ -279,11 +291,12 @@ def _run_owner_line(host,line):
     parts=line.split()
     if not parts:raise ValueError("empty owner command")
     cmd=parts[0]; arg=parts[1] if len(parts)==2 else ""
-    if (cmd in ("approve","deny") and len(parts)!=2) or (cmd in ("revoke","freeze","status") and len(parts)!=1):
+    if (cmd in ("approve","deny") and len(parts)!=2) or (cmd in ("new-invite","revoke","freeze","status") and len(parts)!=1):
         raise ValueError("invalid owner command arguments")
     try:
         if cmd=="approve":host.approve(arg);print("Approved %s. Agent may retrieve one session token."%arg,flush=True);return True
         if cmd=="deny":host.deny(arg);print("Denied %s."%arg,flush=True);return True
+        if cmd=="new-invite":print_invitation(host);return True
         if cmd=="revoke":host.revoke();print("Revoked.",flush=True);return True
         if cmd=="freeze":host.frozen=True;host.audit("freeze","session","allowed");print("Frozen.",flush=True);return True
         if cmd=="status":print(json.dumps({k:v["status"] for k,v in host.pending.items()}),flush=True);return True
@@ -292,10 +305,16 @@ def _run_owner_line(host,line):
         print("Owner action failed: "+str(e),flush=True)
     return True
 
+def print_invitation(host,new=True):
+    if new: host.new_invite()
+    print("MOLT_INVITATION_ID="+host.invite_id,flush=True)
+    print("MOLT_INVITATION_SECRET="+host.invite_secret,flush=True)
+    print("Invitation expires in %g minutes and is single-use."%(host.invite_ttl/60),flush=True)
+
 def main():
     ap=argparse.ArgumentParser();ap.add_argument("--root",required=True);ap.add_argument("--create-root",action="store_true");ap.add_argument("--state-dir",required=True);ap.add_argument("--port",type=int,default=8765);ap.add_argument("--invite-ttl",type=float,default=10);ap.add_argument("--session-ttl",type=float,default=60);ap.add_argument("--owner-cmd-file",default=None);a=ap.parse_args()
     host=HostState(a.root,a.state_dir,a.invite_ttl,a.session_ttl,a.create_root);host.server=ThreadingHTTPServer(("127.0.0.1",a.port),Handler);host.server.host=host
-    print("MOLT_URL=http://127.0.0.1:%d"%host.server.server_port,flush=True);print("MOLT_INVITATION_ID="+host.invite_id,flush=True);print("MOLT_INVITATION_SECRET="+host.invite_secret,flush=True);print("Invitation expires in %g minutes and is single-use."%a.invite_ttl,flush=True)
+    print("MOLT_URL=http://127.0.0.1:%d"%host.server.server_port,flush=True);print_invitation(host,False)
     if a.owner_cmd_file:
         threading.Thread(target=owner_file_console,args=(host,a.owner_cmd_file),daemon=True).start()
     threading.Thread(target=owner_console,args=(host,),daemon=True).start();signal.signal(signal.SIGINT,lambda *_:host.stop());signal.signal(signal.SIGTERM,lambda *_:host.stop())

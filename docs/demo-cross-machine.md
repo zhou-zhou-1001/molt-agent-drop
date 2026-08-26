@@ -1,17 +1,17 @@
 # Molt Drop 跨机器实机演示（推荐路径）
 
-本文只给一条推荐路径：**Agent 机器执行 SSH 本地转发，Host 继续只监听本机回环地址**。
+本文首选实机验证路径：**Windows Host 使用系统自带 SSH 客户端，向 Agent/Mac 建立反向隧道**。Windows Host 无需安装 OpenSSH Server，Molt 仍只监听本机回环地址。
 
 ```text
 ┌────────────── Agent 机器 ──────────────┐
-│ SSH client                             │
-│ 127.0.0.1:18765  ───── SSH ─────┐      │
+│ SSH Server                             │
+│ 127.0.0.1:18765  ◀──── SSH ─────┐      │
 │ drop_client.py                   │      │
 └──────────────────────────────────┼──────┘
                                    │
                          127.0.0.1:8765
 ┌────────────── Host 机器 ─────────┴──────┐
-│ drop_host.py                            │
+│ drop_host.py + Windows SSH client       │
 │ 专用共享目录 + 审计日志                 │
 └─────────────────────────────────────────┘
 ```
@@ -22,8 +22,9 @@
 
 - **Host**：文件所在电脑。下面示例是 Windows。
 - **Agent**：运行 Agent 的电脑，可以是 macOS、Linux 或另一台 Windows。
-- Host 必须有可用的 SSH Server，Agent 必须有 `ssh` 客户端。
-- 你需要知道 Host 的 SSH 用户名、地址，以及 Host SSH 公钥的指纹。
+- Host 只需 Windows 自带的 OpenSSH **客户端**；不要先运行 `Add-WindowsCapability` 安装 OpenSSH Server。
+- Agent/Mac 需开启 SSH Server（macOS 为“系统设置 → 通用 → 共享 → 远程登录”）。
+- 你需要知道 Agent/Mac 的 SSH 用户名、地址，以及它的 SSH host key 指纹。
 
 如果只是两台同一局域网电脑，也仍然建议走 SSH，不要改成明文 LAN HTTP。
 
@@ -32,10 +33,10 @@
 在 **Host 的 Windows PowerShell 5.1** 复制下面完整的一行。不需要先安装 Git 或 Python，也不要拆行或替换其中内容：
 
 ```powershell
-$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u=@("https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1","https://github.com/zhou-zhou-1001/molt-agent-drop/raw/refs/heads/main/bootstrap.ps1");$s=$null;$last=$null;foreach($x in $u){try{$r=[Net.HttpWebRequest]::Create($x);$r.Method="GET";$r.UserAgent="Molt-Agent-Drop-Launcher";$r.Timeout=30000;$r.ReadWriteTimeout=30000;$p=[Net.HttpWebResponse]$r.GetResponse();if([int]$p.StatusCode -ne 200){throw "HTTP $([int]$p.StatusCode)"};$q=New-Object IO.StreamReader($p.GetResponseStream());$s=$q.ReadToEnd();$q.Dispose();$p.Dispose();if(-not [string]::IsNullOrEmpty($s)){break}}catch{$last=$_;if($p){$p.Dispose()}}};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Bootstrap download failed: $last"};& ([ScriptBlock]::Create($s))
+$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u=@("https://cdn.jsdelivr.net/gh/zhou-zhou-1001/molt-agent-drop@main/bootstrap.ps1","https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1","https://github.com/zhou-zhou-1001/molt-agent-drop/raw/refs/heads/main/bootstrap.ps1");$s=$null;$last=$null;foreach($x in $u){try{$r=[Net.HttpWebRequest]::Create($x);$r.Method="GET";$r.UserAgent="Molt-Agent-Drop-Launcher";$r.Timeout=30000;$r.ReadWriteTimeout=30000;$p=[Net.HttpWebResponse]$r.GetResponse();if([int]$p.StatusCode -ne 200){throw "HTTP $([int]$p.StatusCode)"};$q=New-Object IO.StreamReader($p.GetResponseStream());$s=$q.ReadToEnd();$q.Dispose();$p.Dispose();if(-not [string]::IsNullOrEmpty($s)){break}}catch{$last=$_;if($p){$p.Dispose()}}};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Bootstrap download failed: $last"};& ([ScriptBlock]::Create($s))
 ```
 
-命令直接在当前 Windows PowerShell 5.1 进程内运行，不启动子 `powershell.exe`，也不修改全局或用户执行策略。它会启用 TLS 1.2，并在下载异常、内容为空或过短、内容含非 ASCII 字符时立即停止。仓库 bootstrap 会先取得准确 commit，再校验下载状态、文件大小、ZIP 内容和 commit marker，只从随机 staging 发布完整目录。失败会立即停止，旧的 `%USERPROFILE%\molt-agent-drop` 不会被启动。
+命令优先使用 jsDelivr CDN，GitHub 双地址作为回退；它直接在当前 Windows PowerShell 5.1 进程内运行，不启动子 `powershell.exe`，也不修改全局或用户执行策略。它会启用 TLS 1.2，并在下载异常、内容为空或过短、内容含非 ASCII 字符时立即停止。仓库 bootstrap 会先取得准确 commit，再校验下载状态、文件大小、ZIP 内容和 commit marker，只从随机 staging 发布完整目录。失败会立即停止，旧的 `%USERPROFILE%\molt-agent-drop` 不会被启动。
 
 网络抖动时直接重跑同一条命令。若提示 commit 目录缺少或不匹配 marker，只删除 bootstrap 自己管理的 source cache，再重跑：
 
@@ -61,15 +62,15 @@ MOLT_INVITATION_SECRET=...
 
 Host 窗口必须保持打开。Host 端口只绑定 `127.0.0.1`，不需要开放入站 8765。
 
-## 2. 独立核对 Host 的 SSH host key（必须）
+## 2. 独立核对 Agent/Mac 的 SSH host key（必须）
 
-在 Host 上查看 SSH 公钥指纹。Windows PowerShell 示例：
+在 Agent/Mac 上查看 SSH 公钥指纹。macOS Terminal 示例：
 
 ```powershell
-ssh-keygen -lf "$env:ProgramData\ssh\ssh_host_ed25519_key.pub"
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-通过可信的独立渠道把**指纹**交给 Agent 操作者。第一次 SSH 连接时，只有屏幕指纹完全一致才继续。
+通过可信的独立渠道把**指纹**交给 Windows Host 操作者。第一次 SSH 连接时，只有屏幕指纹完全一致才继续。
 
 不要使用：
 
@@ -78,46 +79,26 @@ ssh-keygen -lf "$env:ProgramData\ssh\ssh_host_ed25519_key.pub"
 -o UserKnownHostsFile=/dev/null
 ```
 
-## 3. 在 Agent 机器建立本地 SSH tunnel
+## 3. 在 Windows Host 建立反向 SSH tunnel
 
-这一条命令必须在 **Agent 机器**执行，不是在 Host 执行。
-
-### macOS / Linux
-
-```bash
-mkdir -p ~/.ssh
-ssh-keyscan -t ed25519 HOST_ADDRESS
-# 仅在与可信渠道提供的指纹核对一致后，才把完整公钥行写入专用文件：
-# ~/.ssh/molt_demo_known_hosts
-
-ssh -N -T \
-  -o ExitOnForwardFailure=yes \
-  -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$HOME/.ssh/molt_demo_known_hosts" \
-  -L 127.0.0.1:18765:127.0.0.1:8765 \
-  HOST_USER@HOST_ADDRESS
-```
-
-### Windows PowerShell
-
-先建立专用 known-hosts 文件，并把已经独立核对过的 Host 公钥行放入其中，例如：
+先建立专用 known-hosts 文件，并把已经独立核对过的 Agent/Mac 公钥行放入其中，例如：
 
 ```powershell
 $KnownHosts = "$env:USERPROFILE\.ssh\molt_demo_known_hosts"
 ```
 
-然后在 **Agent 的 PowerShell** 执行：
+然后在 **Host 的 PowerShell** 执行（`AGENT_USER` 和 `AGENT_ADDRESS` 替换为 Mac 的 SSH 用户和地址）：
 
 ```powershell
 ssh -N -T `
   -o ExitOnForwardFailure=yes `
   -o StrictHostKeyChecking=yes `
   -o "UserKnownHostsFile=$KnownHosts" `
-  -L 127.0.0.1:18765:127.0.0.1:8765 `
-  HOST_USER@HOST_ADDRESS
+  -R 18765:127.0.0.1:8765 `
+  AGENT_USER@AGENT_ADDRESS
 ```
 
-输入 Host 的 SSH 凭据后，这个窗口保持打开。不要把 `127.0.0.1:18765` 改成 `0.0.0.0:18765`。
+输入 Agent/Mac 的 SSH 凭据后，这个窗口保持打开。默认远端转发只在 Agent/Mac 的回环地址监听；不要设置 `GatewayPorts=yes`，也不要把监听地址改成 `0.0.0.0`。
 
 验证 tunnel 是否通了：在 **Agent 机器**执行：
 
@@ -147,7 +128,7 @@ cd molt-agent-drop
 Windows（如果这台 Agent 机器尚未下载项目，也使用第 1 节的同一条 bootstrap 命令并选择 `2. Agent`）：
 
 ```powershell
-$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u=@("https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1","https://github.com/zhou-zhou-1001/molt-agent-drop/raw/refs/heads/main/bootstrap.ps1");$s=$null;$last=$null;foreach($x in $u){try{$r=[Net.HttpWebRequest]::Create($x);$r.Method="GET";$r.UserAgent="Molt-Agent-Drop-Launcher";$r.Timeout=30000;$r.ReadWriteTimeout=30000;$p=[Net.HttpWebResponse]$r.GetResponse();if([int]$p.StatusCode -ne 200){throw "HTTP $([int]$p.StatusCode)"};$q=New-Object IO.StreamReader($p.GetResponseStream());$s=$q.ReadToEnd();$q.Dispose();$p.Dispose();if(-not [string]::IsNullOrEmpty($s)){break}}catch{$last=$_;if($p){$p.Dispose()}}};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Bootstrap download failed: $last"};& ([ScriptBlock]::Create($s))
+$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u=@("https://cdn.jsdelivr.net/gh/zhou-zhou-1001/molt-agent-drop@main/bootstrap.ps1","https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1","https://github.com/zhou-zhou-1001/molt-agent-drop/raw/refs/heads/main/bootstrap.ps1");$s=$null;$last=$null;foreach($x in $u){try{$r=[Net.HttpWebRequest]::Create($x);$r.Method="GET";$r.UserAgent="Molt-Agent-Drop-Launcher";$r.Timeout=30000;$r.ReadWriteTimeout=30000;$p=[Net.HttpWebResponse]$r.GetResponse();if([int]$p.StatusCode -ne 200){throw "HTTP $([int]$p.StatusCode)"};$q=New-Object IO.StreamReader($p.GetResponseStream());$s=$q.ReadToEnd();$q.Dispose();$p.Dispose();if(-not [string]::IsNullOrEmpty($s)){break}}catch{$last=$_;if($p){$p.Dispose()}}};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Bootstrap download failed: $last"};& ([ScriptBlock]::Create($s))
 ```
 
 选择 `2. Agent`，填入 Host 显示的 invitation ID 和 secret。向导会访问默认地址：
@@ -205,9 +186,9 @@ Windows 将 `python3` 换成 `py -3` 或 `python`。`TOKEN` 只放在本机终�
 
 如果 tunnel 意外断开，Host 不会把 SSH 断开自动等价为撤销；立即回到 Host 窗口输入 `freeze` 或 `revoke`。
 
-## 为什么不把 reverse tunnel 作为默认
+## 备选：在 Windows Host 安装 OpenSSH Server
 
-reverse tunnel 也能工作，但需要用户理解 `-R`、远端监听地址和 SSH Server 的 forwarding 策略，容易把监听地址误改成公网。Molt Demo 的小白默认路径统一使用 Agent 侧 `-L` 本地转发；只有高级用户明确理解网络拓扑时，才自行采用其他安全 tunnel 方案。
+只有网络方向不允许 Host 主动连接 Agent/Mac 时，才考虑用 `Add-WindowsCapability` 安装 Windows OpenSSH Server，再由 Agent 使用 `-L 127.0.0.1:18765:127.0.0.1:8765` 本地转发。该安装在部分家庭机上可能非常慢或卡住，因此不是首选；备选路径同样必须独立核对 Windows Host 的 host key，且禁止 `StrictHostKeyChecking=no`。
 
 ## Demo 限制
 

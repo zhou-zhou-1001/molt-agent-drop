@@ -37,6 +37,23 @@ class DropTests(unittest.TestCase):
     def test_expired_invitation_is_rejected(self):
         self.host.invite_deadline=time.monotonic()-1
         with self.assertRaises(PermissionError):self.host.request_pair(self.host.invite_id,self.host.invite_secret,"test")
+    def test_owner_can_create_fresh_single_use_invitation(self):
+        old_id,old_secret=self.host.invite_id,self.host.invite_secret
+        rid=self.host.request_pair(old_id,old_secret,"old")
+        self.host.invite_deadline=time.monotonic()-1
+        new_id,new_secret=self.host.new_invite()
+        self.assertNotEqual((old_id,old_secret),(new_id,new_secret));self.assertFalse(self.host.invite_consumed)
+        self.assertGreater(self.host.invite_deadline,time.monotonic());self.assertEqual("superseded",self.host.pending[rid]["status"])
+        with self.assertRaises(PermissionError):self.host.request_pair(old_id,old_secret,"old")
+        new_rid=self.host.request_pair(new_id,new_secret,"new")
+        with self.assertRaises(PermissionError):self.host.request_pair(new_id,new_secret,"again")
+        self.host.approve(new_rid)
+        audit=self.host.audit_path.read_text();self.assertIn('"event":"invitation_create"',audit);self.assertNotIn(new_secret,audit)
+    def test_new_invitation_fails_closed_when_audit_fails(self):
+        before=(self.host.invite_id,self.host.invite_secret,self.host.invite_deadline,self.host.invite_consumed)
+        self.host.audit=lambda *args,**kwargs: (_ for _ in ()).throw(OSError("audit unavailable"))
+        with self.assertRaises(OSError):self.host.new_invite()
+        self.assertEqual(before,(self.host.invite_id,self.host.invite_secret,self.host.invite_deadline,self.host.invite_consumed))
     def test_structured_files_no_escape_or_overwrite(self):
         token=self.pair();self.assertEqual(200,self.call("GET","/files/list?path=.",token=token)[0])
         self.assertEqual(201,self.call("POST","/files/create",{"path":"new.txt","content":"new"},token)[0]);self.assertEqual("new",(self.root/"new.txt").read_text())
@@ -62,6 +79,8 @@ class DropTests(unittest.TestCase):
         self.assertEqual("pending",self.host.pending[rid]["status"]);self.assertFalse(inbox.exists())
         partial.write_text("approve "+rid+"\n",encoding="utf-8");os.chmod(partial,0o600);os.replace(partial,inbox)
         self.assertTrue(consume_owner_cmd_file(self.host,inbox));self.assertEqual("approved",self.host.pending[rid]["status"]);self.assertFalse(inbox.exists())
+        old_id=self.host.invite_id;partial.write_text("new-invite\n",encoding="utf-8");os.chmod(partial,0o600);os.replace(partial,inbox)
+        self.assertTrue(consume_owner_cmd_file(self.host,inbox));self.assertNotEqual(old_id,self.host.invite_id);self.assertFalse(self.host.invite_consumed)
     def test_owner_command_rejects_escape_link_and_broad_mode(self):
         outside=Path(self.tmp.name)/"outside.txt"
         with self.assertRaises(ValueError):validate_owner_cmd_path(self.host,outside)

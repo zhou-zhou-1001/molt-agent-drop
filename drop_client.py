@@ -29,7 +29,7 @@ def main():
         print("Pair request pending owner approval: "+rid,flush=True);deadline=time.monotonic()+a.wait
         while time.monotonic()<deadline:
             time.sleep(1);result=c.call("POST","/pair/status",{"request_id":rid,"invitation_secret":a.invitation_secret},False)
-            if result["status"]=="approved":print("MOLT_SESSION_TOKEN="+result["token"]);return
+            if result["status"]=="approved":print("MOLT_SESSION_TOKEN="+result["token"]);print("Copy the complete token above; do not use a visually truncated value.");return
             if result["status"]!="pending":raise SystemExit("Pairing "+result["status"])
         raise SystemExit("Timed out waiting for owner approval")
     query=lambda path:"?"+urllib.parse.urlencode({"path":path})

@@ -38,11 +38,11 @@ class WindowsOnboardingTests(unittest.TestCase):
             launchers.extend(
                 line
                 for line in re.findall(r"```powershell\n([^\n]+)\n```", text)
-                if "raw.githubusercontent.com" in line
+                if "cdn.jsdelivr.net/gh/zhou-zhou-1001/molt-agent-drop@main/bootstrap.ps1" in line
             )
         self.assertGreaterEqual(len(launchers), 2)
         for launcher in launchers:
-            self.assertIn("raw.githubusercontent.com", launcher)
+            self.assertLess(launcher.index("cdn.jsdelivr.net"), launcher.index("raw.githubusercontent.com"))
             self.assertNotIn("powershell.exe", launcher.lower())
             self.assertIn('$ErrorActionPreference="Stop"', launcher)
             self.assertIn("Tls12", launcher)

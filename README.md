@@ -17,10 +17,10 @@ cd molt-agent-drop
 Windows PowerShell 5.1（推荐，不需要 Git 或 Python）：
 
 ```powershell
-$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u=@("https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1","https://github.com/zhou-zhou-1001/molt-agent-drop/raw/refs/heads/main/bootstrap.ps1");$s=$null;$last=$null;foreach($x in $u){try{$r=[Net.HttpWebRequest]::Create($x);$r.Method="GET";$r.UserAgent="Molt-Agent-Drop-Launcher";$r.Timeout=30000;$r.ReadWriteTimeout=30000;$p=[Net.HttpWebResponse]$r.GetResponse();if([int]$p.StatusCode -ne 200){throw "HTTP $([int]$p.StatusCode)"};$q=New-Object IO.StreamReader($p.GetResponseStream());$s=$q.ReadToEnd();$q.Dispose();$p.Dispose();if(-not [string]::IsNullOrEmpty($s)){break}}catch{$last=$_;if($p){$p.Dispose()}}};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Bootstrap download failed: $last"};& ([ScriptBlock]::Create($s))
+$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u=@("https://cdn.jsdelivr.net/gh/zhou-zhou-1001/molt-agent-drop@main/bootstrap.ps1","https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1","https://github.com/zhou-zhou-1001/molt-agent-drop/raw/refs/heads/main/bootstrap.ps1");$s=$null;$last=$null;foreach($x in $u){try{$r=[Net.HttpWebRequest]::Create($x);$r.Method="GET";$r.UserAgent="Molt-Agent-Drop-Launcher";$r.Timeout=30000;$r.ReadWriteTimeout=30000;$p=[Net.HttpWebResponse]$r.GetResponse();if([int]$p.StatusCode -ne 200){throw "HTTP $([int]$p.StatusCode)"};$q=New-Object IO.StreamReader($p.GetResponseStream());$s=$q.ReadToEnd();$q.Dispose();$p.Dispose();if(-not [string]::IsNullOrEmpty($s)){break}}catch{$last=$_;if($p){$p.Dispose()}}};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Bootstrap download failed: $last"};& ([ScriptBlock]::Create($s))
 ```
 
-整条命令只有一行，没有需要替换的占位符。请直接粘贴到已经打开的 Windows PowerShell 5.1；它在当前进程内下载并执行 bootstrap，不启动子 `powershell.exe`，也不修改系统或用户的执行策略。launcher 会让错误立即停止、启用 TLS 1.2，并在执行前拒绝空白、过短或非 ASCII 的下载内容。`bootstrap.ps1` 会再次设置 TLS 1.2，解析 GitHub `main` 的 40 位 commit，按该 commit 下载 ZIP，检查 HTTP 状态、长度、ZIP 根目录和必需文件，再从随机 staging 目录发布到：
+整条命令只有一行，没有需要替换的占位符。请直接粘贴到已经打开的 Windows PowerShell 5.1；它优先使用实机更稳定的 jsDelivr CDN，两个 GitHub 地址作为回退。命令在当前进程内下载并执行 bootstrap，不启动子 `powershell.exe`，也不修改系统或用户的执行策略。launcher 会让错误立即停止、启用 TLS 1.2，并在执行前拒绝空白、过短或非 ASCII 的下载内容。`bootstrap.ps1` 会再次设置 TLS 1.2，解析 GitHub `main` 的 40 位 commit，按该 commit 下载 ZIP，检查 HTTP 状态、长度、ZIP 根目录和必需文件，再从随机 staging 目录发布到：
 
 ```text
 %LOCALAPPDATA%\MoltDropDemo\source\<40-character-commit>
@@ -82,7 +82,9 @@ py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN read hello.txt
 py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN create result.txt --content "demo result"
 ```
 
-Host 控制台可输入 `revoke`、`freeze` 或按 Ctrl-C 停止。每次文件请求都会检查 session 状态和 TTL。
+邀请过期或需要作废未完成的配对时，Host Owner 可输入 `new-invite`，Host 会审计并打印新的 `MOLT_INVITATION_ID` / `MOLT_INVITATION_SECRET`，重新开始一次性 10 分钟邀请窗口。Host 控制台也可输入 `revoke`、`freeze` 或按 Ctrl-C 停止。每次文件请求都会检查 session 状态和 TTL。
+
+跨机器首选路径是让 Windows Host 使用系统自带 SSH 客户端，主动连接 Agent/Mac 并建立反向隧道：`ssh -R 18765:127.0.0.1:8765 USER@MAC_ADDRESS`。这样 Host 无需安装 Windows OpenSSH Server；仍须独立核对 Mac 的 host key，且不得使用 `StrictHostKeyChecking=no`。只有无法让 Host 主动连接 Agent 时，才考虑在 Host 安装 SSH Server 并使用传统 `-L` 转发。
 
 跨机器完整步骤与 host-key 要求见 [docs/demo-cross-machine.md](docs/demo-cross-machine.md)。bootstrap 源自 [PythonEmbed4Win](https://github.com/jtmoon79/PythonEmbed4Win)（MIT，Copyright (c) 2022 James Thomas Moon），Molt 改造：固定版本 + 强制哈希校验 + 多源 fallback + 私有目录。
 
