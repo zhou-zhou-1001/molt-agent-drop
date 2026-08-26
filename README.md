@@ -14,15 +14,38 @@ cd molt-agent-drop
 ./molt
 ```
 
-Windows PowerShell：
+Windows PowerShell（推荐，小白无需安装 Git）：
+
+```powershell
+$zip = Join-Path $env:TEMP 'molt-agent-drop.zip'
+$tmp = Join-Path $env:TEMP 'molt-agent-drop-extract'
+$dest = Join-Path $HOME 'molt-agent-drop'
+if (Test-Path $dest) { throw "目录已存在，请换一个目录或先确认它是旧的 Molt 目录： $dest" }
+Invoke-WebRequest 'https://github.com/zhou-zhou-1001/molt-agent-drop/archive/refs/heads/main.zip' -OutFile $zip
+if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+Expand-Archive $zip -DestinationPath $tmp -Force
+Move-Item (Join-Path $tmp 'molt-agent-drop-main') $dest
+Remove-Item $zip -Force
+Set-Location $dest
+.\\molt.ps1
+```
+
+如果 PowerShell 提示禁止运行脚本，只对当前窗口临时放行，不要改全局策略：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\\molt.ps1
+```
+
+如果你已经安装 Git，也可以使用：
 
 ```powershell
 git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
-cd molt-agent-drop
-.\molt.ps1
+Set-Location molt-agent-drop
+.\\molt.ps1
 ```
 
-向导会先问你是哪一端：
+注意：正确文件名是 `molt.ps1`，不是 `molt.ps1cc`。向导会先问你是哪一端：
 
 - **Host**：选择专用共享目录，自动准备已校验的 Python，启动 Host，并显示一次性 invitation。
 - **Agent**：输入 Host 给你的 invitation，发起配对；Host Owner 仍必须明确批准 request id。

@@ -29,15 +29,30 @@
 
 ## 1. 在 Host 机器启动 Molt
 
-在 **Host 的 PowerShell** 执行：
+在 **Host 的 PowerShell** 执行。Windows 没有 Git 也没关系，使用系统自带 PowerShell 下载 ZIP：
 
 ```powershell
-git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
-Set-Location molt-agent-drop
+$zip = Join-Path $env:TEMP 'molt-agent-drop.zip'
+$tmp = Join-Path $env:TEMP 'molt-agent-drop-extract'
+$dest = Join-Path $HOME 'molt-agent-drop'
+if (Test-Path $dest) { throw "目录已存在，请确认后换目录： $dest" }
+Invoke-WebRequest 'https://github.com/zhou-zhou-1001/molt-agent-drop/archive/refs/heads/main.zip' -OutFile $zip
+if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+Expand-Archive $zip -DestinationPath $tmp -Force
+Move-Item (Join-Path $tmp 'molt-agent-drop-main') $dest
+Remove-Item $zip -Force
+Set-Location $dest
 .\molt.ps1
 ```
 
-选择 `1. Host`，接受一个**专用、无敏感文件**的共享目录，例如：
+如果脚本执行策略阻止运行，只对当前 PowerShell 窗口临时放行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\molt.ps1
+```
+
+不要为了这个 Demo 修改 LocalMachine 或 CurrentUser 的全局执行策略。选择 `1. Host`，接受一个**专用、无敏感文件**的共享目录，例如：
 
 ```text
 C:\MoltDemoShare
