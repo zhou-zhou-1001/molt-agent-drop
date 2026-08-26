@@ -34,11 +34,16 @@ function Get-Commit {
   $url = "https://api.github.com/repos/$repoOwner/$repoName/commits/$repoRef"
   $client = New-WebClient
   try {
-    $json = $client.DownloadString($url) | ConvertFrom-Json
+    $body = $client.DownloadString($url)
   } finally {
     $client.Dispose()
   }
-  $commit = [string]$json.sha
+  # Windows PowerShell 5.1 ConvertFrom-Json can fail on the large GitHub
+  # commit document (especially when it contains patch text). Extract only
+  # the top-level SHA instead of parsing the entire response.
+  $match = [regex]::Match($body, '"sha"\s*:\s*"([0-9a-f]{40})"')
+  if (-not $match.Success) { Fail 'GitHub response did not contain a valid commit id.' }
+  $commit = $match.Groups[1].Value
   if ($commit -notmatch '^[0-9a-f]{40}$') { Fail 'GitHub returned an invalid commit id.' }
   return $commit
 }
