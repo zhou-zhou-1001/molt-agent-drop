@@ -1,13 +1,81 @@
 #!/usr/bin/env python3
 """Molt Agent Drop demo host: localhost HTTP behind an explicit SSH tunnel."""
-import argparse, hashlib, hmac, json, os, secrets, signal, stat, sys, threading, time
+import argparse, hashlib, hmac, json, os, re, secrets, shutil, signal, stat, subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, urlparse
 
 MAX_TEXT_BYTES = 2_000_000
 MAX_OWNER_COMMAND_BYTES = 4096
+DIAGNOSTIC_TIMEOUT_SECONDS = 30
+DIAGNOSTIC_OUTPUT_BYTES = 64_000
+DIAGNOSTIC_CATALOG = {
+    "system.identity": ("whoami.exe",) if os.name == "nt" else ("whoami",),
+    "openclaw.which": ("where.exe", "openclaw") if os.name == "nt" else ("which", "openclaw"),
+    "openclaw.version": ("openclaw", "--version"),
+    # These commands may print configuration or credential material. Keep them
+    # out of the first diagnostics-only release until a machine-readable,
+    # secret-free output mode is available.
+    "wsl.status": ("wsl.exe", "--status"),
+    "network.check": ("ping.exe", "-n", "1", "1.1.1.1") if os.name == "nt" else ("ping", "-c", "1", "1.1.1.1"),
+}
 def digest(value): return hashlib.sha256(value.encode()).hexdigest()
+
+def _diagnostic_digest(command,args):
+    return digest(json.dumps({"command":command,"args":args},sort_keys=True,separators=(",",":")))
+
+def _redact_diagnostic_text(value):
+    value=re.sub(r"(?i)(authorization:\s*bearer|api[_-]?key|password|secret|token)(\s*[:=]?\s*)([^\s,;]+)",r"\1\2[REDACTED]",value)
+    value=re.sub(r"(?<![A-Za-z0-9])[A-Za-z0-9_\-]{32,}(?![A-Za-z0-9])","[REDACTED]",value)
+    encoded=value.encode("utf-8")
+    return encoded[:DIAGNOSTIC_OUTPUT_BYTES].decode("utf-8",errors="ignore")
+
+def _diagnostic_environment():
+    allowed=("PATH","SystemRoot","WINDIR","COMSPEC","PATHEXT","HOME","USERPROFILE","APPDATA","LOCALAPPDATA","TEMP","TMP","LANG","LC_ALL")
+    return {name:os.environ[name] for name in allowed if name in os.environ}
+
+def _run_fixed_diagnostic(argv,cwd):
+    env=_diagnostic_environment(); executable=shutil.which(argv[0],path=env.get("PATH",os.defpath))
+    if not executable: raise FileNotFoundError("diagnostic executable unavailable")
+    fixed_argv=(executable,)+tuple(argv[1:]); chunks=[]; size=[0]; output_lock=threading.Lock(); truncated=[False]
+    def drain(pipe):
+        while True:
+            try:data=pipe.read(4096)
+            except (OSError,ValueError):break
+            if not data:break
+            with output_lock:
+                remaining=DIAGNOSTIC_OUTPUT_BYTES-size[0]
+                if remaining>0:chunks.append(data[:remaining]);size[0]+=min(len(data),remaining)
+                if len(data)>remaining:truncated[0]=True
+    creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0) if os.name=="nt" else 0
+    proc=subprocess.Popen(fixed_argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+        cwd=str(cwd),env=env,shell=False,creationflags=creationflags,start_new_session=os.name!="nt")
+    reader=threading.Thread(target=drain,args=(proc.stdout,),daemon=True);reader.start();timed_out=False
+    try:proc.wait(timeout=DIAGNOSTIC_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        timed_out=True
+        if os.name!="nt":
+            try:os.killpg(proc.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+        else:
+            # CREATE_NEW_PROCESS_GROUP is not sufficient to kill descendants;
+            # use the OS process-tree terminator on timeout and fail closed if
+            # it cannot be invoked.
+            taskkill=os.path.join(os.environ.get("SystemRoot",r"C:\\Windows"),"System32","taskkill.exe")
+            try:
+                subprocess.run((taskkill,"/PID",str(proc.pid),"/T","/F"),stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=5,
+                    shell=False)
+            except (OSError,subprocess.SubprocessError):
+                try:proc.kill()
+                except OSError:pass
+        proc.wait()
+    reader.join(timeout=2)
+    if reader.is_alive():
+        # A descendant retaining stdout cannot make completion unbounded; fail closed.
+        proc.stdout.close();reader.join(timeout=1);truncated[0]=True
+    output=_redact_diagnostic_text(b"".join(chunks).decode("utf-8",errors="replace"))
+    return {"exit_code":proc.returncode,"output":output,"timed_out":timed_out,"truncated":truncated[0]}
 
 def is_link(path):
     if path.is_symlink(): return True
@@ -39,7 +107,7 @@ def validate_root(path, create=False):
     return root
 
 class HostState:
-    def __init__(self,root,state_dir,invite_ttl,session_ttl,create_root=False):
+    def __init__(self,root,state_dir,invite_ttl,session_ttl,create_root=False,enable_diagnostics=False):
         if invite_ttl<=0 or session_ttl<=0: raise ValueError("TTLs must be positive")
         self.root=validate_root(root,create_root)
         state_raw=Path(state_dir).expanduser()
@@ -53,6 +121,7 @@ class HostState:
         self.audit_path=self.state_dir/"audit.jsonl"; self.invite_ttl=invite_ttl*60; self.invite_id=secrets.token_urlsafe(18); self.invite_secret=secrets.token_urlsafe(32)
         self.invite_hash=digest(self.invite_secret); self.invite_deadline=time.monotonic()+self.invite_ttl; self.session_ttl=session_ttl*60
         self.pending={}; self.invite_consumed=False; self.claimed_request_id=None; self.token_hash=None; self.session_deadline=None
+        self.enable_diagnostics=bool(enable_diagnostics); self.diagnostic_requests={}
         self.revoked=False; self.frozen=False; self.lock=threading.RLock(); self.server=None; self.stopping=False
         self.audit("host_start","system","allowed",{"root":str(self.root)})
 
@@ -135,6 +204,88 @@ class HostState:
             self.revoked=True; self.token_hash=None
             self.audit("revoke","session","allowed",{"reason":reason})
 
+    def request_diagnostic(self,command,args,token):
+        with self.lock:
+            if not self.enable_diagnostics:
+                self.audit("diagnostic_request","diagnostics","denied",{"reason":"disabled"});raise PermissionError("diagnostics disabled")
+            if self.session_status(token)!="active":raise PermissionError("session inactive")
+            if not isinstance(command,str) or command not in DIAGNOSTIC_CATALOG:raise ValueError("unknown diagnostic command")
+            if not isinstance(args,dict) or args:raise ValueError("diagnostic args must be an empty object")
+            rid=secrets.token_urlsafe(18); binding=_diagnostic_digest(command,args)
+            self.audit("diagnostic_request",rid,"pending",{"command":command,"digest":binding})
+            self.diagnostic_requests[rid]={"status":"pending","command":command,"args":{},"digest":binding,
+                "session_hash":digest(token),"session_deadline":self.session_deadline,"result":None}
+            return rid
+
+    def diagnostic_result(self,rid,token):
+        with self.lock:
+            if not self.enable_diagnostics:raise PermissionError("diagnostics disabled")
+            if self.session_status(token)!="active":raise PermissionError("session inactive")
+            item=self.diagnostic_requests.get(rid)
+            if not item or not hmac.compare_digest(item["session_hash"],digest(token)):raise ValueError("unknown diagnostic request")
+            value={"request_id":rid,"status":item["status"],"command":item["command"]}
+            if item["result"] is not None:value["result"]=item["result"]
+            self.audit("diagnostic_status",rid,"allowed",{"status":item["status"]})
+            return value
+
+    def _diagnostic_approval_check(self,rid):
+        item=self.diagnostic_requests.get(rid)
+        if not item or item["status"]!="pending":raise ValueError("no pending diagnostic request")
+        if self.revoked or self.frozen or self.session_deadline is None or time.monotonic()>=self.session_deadline:
+            raise ValueError("diagnostic session is frozen, revoked, or expired")
+        if item["session_deadline"]!=self.session_deadline or item["session_hash"]!=self.token_hash:
+            raise ValueError("diagnostic session binding changed")
+        if not hmac.compare_digest(item["digest"],_diagnostic_digest(item["command"],item["args"])):
+            raise ValueError("diagnostic request digest mismatch")
+        if item["command"] not in DIAGNOSTIC_CATALOG:raise ValueError("diagnostic command no longer available")
+        return item
+
+    def approve_diagnostic(self,rid):
+        with self.lock:
+            if not self.enable_diagnostics:raise ValueError("diagnostics disabled")
+            item=self._diagnostic_approval_check(rid)
+            self.audit("diagnostic_approval",rid,"allowed",{"command":item["command"],"digest":item["digest"]})
+            item["status"]="approved"
+        threading.Thread(target=self._execute_diagnostic,args=(rid,),daemon=True).start()
+
+    def deny_diagnostic(self,rid):
+        with self.lock:
+            if not self.enable_diagnostics:raise ValueError("diagnostics disabled")
+            item=self.diagnostic_requests.get(rid)
+            if not item or item["status"]!="pending":raise ValueError("no pending diagnostic request")
+            self.audit("diagnostic_approval",rid,"denied",{"command":item["command"],"digest":item["digest"]})
+            item["status"]="denied"
+
+    def _execute_diagnostic(self,rid):
+        with self.lock:
+            item=self.diagnostic_requests.get(rid)
+            if not item or item["status"]!="approved":return
+            try:self._diagnostic_approval_check_for_execution(item)
+            except ValueError as e:
+                item["status"]="blocked";item["result"]={"error":str(e)}
+                self.audit("diagnostic_execution",rid,"denied",{"reason":str(e)});return
+            argv=DIAGNOSTIC_CATALOG[item["command"]]
+            try:self.audit("diagnostic_execution",rid,"allowed",{"phase":"attempt","command":item["command"],"digest":item["digest"]})
+            except OSError:
+                item["status"]="failed";item["result"]={"error":"execution audit failed"};return
+            item["status"]="running"
+        try:
+            result=_run_fixed_diagnostic(argv,self.state_dir)
+            status="completed" if not result["timed_out"] and result["exit_code"]==0 else "failed"
+        except (OSError,ValueError) as e:
+            result={"error":str(e)};status="failed"
+        with self.lock:
+            item["status"]=status;item["result"]=result
+            try:self.audit("diagnostic_execution",rid,"allowed" if status=="completed" else "failed",{"phase":"complete","command":item["command"],"exit_code":result.get("exit_code"),"timed_out":result.get("timed_out",False)})
+            except OSError:
+                item["status"]="failed";item["result"]={"error":"completion audit failed"}
+
+    def _diagnostic_approval_check_for_execution(self,item):
+        if self.revoked or self.frozen or time.monotonic()>=item["session_deadline"]:raise ValueError("diagnostic session is frozen, revoked, or expired")
+        if self.session_deadline!=item["session_deadline"] or self.token_hash!=item["session_hash"]:raise ValueError("diagnostic session binding changed")
+        if not hmac.compare_digest(item["digest"],_diagnostic_digest(item["command"],item["args"])):raise ValueError("diagnostic request digest mismatch")
+        if item["command"] not in DIAGNOSTIC_CATALOG:raise ValueError("diagnostic command no longer available")
+
     def safe_path(self,rel,missing=False):
         if not isinstance(rel,str) or not rel or "\\" in rel or "\0" in rel: raise ValueError("non-empty POSIX relative path required")
         pure=PurePosixPath(rel)
@@ -169,10 +320,13 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(value,dict):raise ValueError("JSON object required")
         return value
     def auth(self):
-        header=self.headers.get("Authorization",""); token=header[7:] if header.startswith("Bearer ") else ""; status=self.host.session_status(token)
+        token=self.bearer_token(); status=self.host.session_status(token)
         if status!="active":
             self.host.audit("api_request",urlparse(self.path).path,"denied",{"reason":status}); self.reply(401 if status=="unauthorized" else 410,{"error":status}); return False
         return True
+    def bearer_token(self):
+        header=self.headers.get("Authorization","")
+        return header[7:] if header.startswith("Bearer ") else ""
     def do_POST(self):
         route=urlparse(self.path).path
         try:
@@ -180,6 +334,17 @@ class Handler(BaseHTTPRequestHandler):
                 b=self.body(); rid=self.host.request_pair(str(b.get("invitation_id","")),str(b.get("invitation_secret","")),str(b.get("label","agent"))); self.reply(202,{"status":"pending","request_id":rid}); return
             if route=="/pair/status":
                 b=self.body(); self.reply(200,self.host.pair_result(str(b.get("request_id","")),str(b.get("invitation_secret","")))); return
+            if route=="/diagnostics/request":
+                if not self.auth():return
+                b=self.body()
+                if set(b)!={"command","args"}:raise ValueError("exactly command and args are required")
+                rid=self.host.request_diagnostic(b["command"],b["args"],self.bearer_token())
+                self.reply(202,{"status":"pending","request_id":rid});return
+            if route=="/diagnostics/status":
+                if not self.auth():return
+                b=self.body()
+                if set(b)!={"request_id"} or not isinstance(b["request_id"],str):raise ValueError("exactly one string request_id is required")
+                self.reply(200,self.host.diagnostic_result(b["request_id"],self.bearer_token()));return
             if route=="/files/create":
                 if not self.auth():return
                 b=self.body(); rel=b.get("path"); content=b.get("content")
@@ -196,7 +361,10 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:self.reply(503,{"error":"host state or filesystem operation failed"})
     def do_GET(self):
         route=urlparse(self.path).path
-        if route=="/health":self.reply(200,{"ok":True,"paired":self.host.session_deadline is not None});return
+        if route=="/health":
+            paired=(self.host.session_deadline is not None and not self.host.revoked and not self.host.frozen
+                    and time.monotonic()<self.host.session_deadline)
+            self.reply(200,{"ok":True,"paired":paired});return
         if not self.auth():return
         rel=parse_qs(urlparse(self.path).query).get("path",["."])[0]
         try:
@@ -218,7 +386,7 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:self.reply(503,{"error":"host state or filesystem operation failed"})
 
 def owner_console(host):
-    print("Owner commands: approve REQUEST_ID | deny REQUEST_ID | new-invite | revoke | freeze | status",flush=True)
+    print("Owner commands: approve REQUEST_ID | deny REQUEST_ID | approve-diagnostic REQUEST_ID | deny-diagnostic REQUEST_ID | new-invite | revoke | freeze | status",flush=True)
     while not host.stopping:
         try:line=input("molt-owner> ").strip()
         except EOFError:return
@@ -226,6 +394,8 @@ def owner_console(host):
             cmd,_,arg=line.partition(" ")
             if cmd=="approve":host.approve(arg);print("Approved. Agent may retrieve one session token.",flush=True)
             elif cmd=="deny":host.deny(arg);print("Denied.",flush=True)
+            elif cmd=="approve-diagnostic":host.approve_diagnostic(arg);print("Diagnostic approved.",flush=True)
+            elif cmd=="deny-diagnostic":host.deny_diagnostic(arg);print("Diagnostic denied.",flush=True)
             elif cmd=="new-invite":print_invitation(host)
             elif cmd=="revoke":host.revoke();print("Revoked.",flush=True)
             elif cmd=="freeze":host.frozen=True;host.audit("freeze","session","allowed");print("Frozen.",flush=True)
@@ -291,11 +461,13 @@ def _run_owner_line(host,line):
     parts=line.split()
     if not parts:raise ValueError("empty owner command")
     cmd=parts[0]; arg=parts[1] if len(parts)==2 else ""
-    if (cmd in ("approve","deny") and len(parts)!=2) or (cmd in ("new-invite","revoke","freeze","status") and len(parts)!=1):
+    if (cmd in ("approve","deny","approve-diagnostic","deny-diagnostic") and len(parts)!=2) or (cmd in ("new-invite","revoke","freeze","status") and len(parts)!=1):
         raise ValueError("invalid owner command arguments")
     try:
         if cmd=="approve":host.approve(arg);print("Approved %s. Agent may retrieve one session token."%arg,flush=True);return True
         if cmd=="deny":host.deny(arg);print("Denied %s."%arg,flush=True);return True
+        if cmd=="approve-diagnostic":host.approve_diagnostic(arg);print("Diagnostic approved %s."%arg,flush=True);return True
+        if cmd=="deny-diagnostic":host.deny_diagnostic(arg);print("Diagnostic denied %s."%arg,flush=True);return True
         if cmd=="new-invite":print_invitation(host);return True
         if cmd=="revoke":host.revoke();print("Revoked.",flush=True);return True
         if cmd=="freeze":host.frozen=True;host.audit("freeze","session","allowed");print("Frozen.",flush=True);return True
@@ -312,8 +484,8 @@ def print_invitation(host,new=True):
     print("Invitation expires in %g minutes and is single-use."%(host.invite_ttl/60),flush=True)
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument("--root",required=True);ap.add_argument("--create-root",action="store_true");ap.add_argument("--state-dir",required=True);ap.add_argument("--port",type=int,default=8765);ap.add_argument("--invite-ttl",type=float,default=10);ap.add_argument("--session-ttl",type=float,default=60);ap.add_argument("--owner-cmd-file",default=None);a=ap.parse_args()
-    host=HostState(a.root,a.state_dir,a.invite_ttl,a.session_ttl,a.create_root);host.server=ThreadingHTTPServer(("127.0.0.1",a.port),Handler);host.server.host=host
+    ap=argparse.ArgumentParser();ap.add_argument("--root",required=True);ap.add_argument("--create-root",action="store_true");ap.add_argument("--state-dir",required=True);ap.add_argument("--port",type=int,default=8765);ap.add_argument("--invite-ttl",type=float,default=10);ap.add_argument("--session-ttl",type=float,default=60);ap.add_argument("--owner-cmd-file",default=None);ap.add_argument("--enable-diagnostics",action="store_true");a=ap.parse_args()
+    host=HostState(a.root,a.state_dir,a.invite_ttl,a.session_ttl,a.create_root,a.enable_diagnostics);host.server=ThreadingHTTPServer(("127.0.0.1",a.port),Handler);host.server.host=host
     print("MOLT_URL=http://127.0.0.1:%d"%host.server.server_port,flush=True);print_invitation(host,False)
     if a.owner_cmd_file:
         threading.Thread(target=owner_file_console,args=(host,a.owner_cmd_file),daemon=True).start()
