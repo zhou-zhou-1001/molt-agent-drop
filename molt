@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# Molt Drop cross-platform first-run launcher.
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+case "$(uname -s 2>/dev/null || printf Windows)" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    if command -v pwsh >/dev/null 2>&1; then
+      exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$HERE/molt.ps1" "$@"
+    fi
+    if command -v powershell >/dev/null 2>&1; then
+      exec powershell -NoProfile -ExecutionPolicy Bypass -File "$HERE/molt.ps1" "$@"
+    fi
+    ;;
+esac
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "$HERE/molt_wizard.py" "$@"
+fi
+printf '%s\n' 'Molt: need Python 3, PowerShell 7, or Windows PowerShell 5.1.' >&2
+exit 1
