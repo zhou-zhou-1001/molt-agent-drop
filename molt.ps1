@@ -36,17 +36,18 @@ if (-not $Role) {
 }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$pythonOutput = & (Join-Path $here 'bootstrap_python.ps1')
+$pythonExit = $LASTEXITCODE
+$python = @($pythonOutput | Select-Object -Last 1)[0]
+if ($pythonExit -ne 0 -or [string]::IsNullOrWhiteSpace([string]$python) -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+  throw 'Python runtime setup failed; no role action was started.'
+}
+$python = ([string]$python).Trim()
+Write-Host "Python: $python" -ForegroundColor Green
 if ($Role -eq 'host') {
   Header 'Host setup'
   if (-not $Root) { $Root = Ask 'Dedicated share directory (never use Desktop, home, or real business files)' 'C:\MoltDemoShare' }
   if (-not $StateDir) { $StateDir = Ask 'Private state directory (audit log goes here)' "$env:LOCALAPPDATA\MoltDropDemo" }
-  $python = $null
-  $bootstrap = Join-Path $here 'bootstrap_python.ps1'
-  Say 'Checking Python; missing runtime will be downloaded and SHA-256 verified...'
-  $python = & $bootstrap
-  if ($LASTEXITCODE -ne 0 -or -not $python -or -not (Test-Path ($python | Select-Object -Last 1))) { throw 'Python runtime setup failed; stopped.' }
-  $python = ($python | Select-Object -Last 1).ToString().Trim()
-  Write-Host "Python: $python" -ForegroundColor Green
   Write-Host "Share directory: $Root"
   Write-Host "State directory: $StateDir"
   $ok = Ask 'Create/use this dedicated directory and start Host? Type yes' 'no'
@@ -68,10 +69,8 @@ if ([string]::IsNullOrWhiteSpace($id) -or [string]::IsNullOrWhiteSpace($secret))
 Header 'Pairing'
 Say 'Sending one-time pairing request; Host Owner must approve the request id on the Host screen.'
 $client = Join-Path $here 'drop_client.py'
-$py = Get-Command py -ErrorAction SilentlyContinue
-if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $py) { throw 'Agent requires Python 3. Install Python 3 and run this wizard again.' }
-& $py.Source $client --url $url pair --invitation-id $id --invitation-secret $secret --label $label
+& $python $client --url $url pair --invitation-id $id --invitation-secret $secret --label $label
+if ($LASTEXITCODE -ne 0) { throw "Pairing client failed with exit code $LASTEXITCODE." }
 Header 'Examples after pairing'
 Write-Host "python drop_client.py --url $url --token TOKEN list ."
 Write-Host "python drop_client.py --url $url --token TOKEN read hello.txt"

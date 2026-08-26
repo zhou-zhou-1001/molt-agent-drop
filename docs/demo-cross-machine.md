@@ -29,30 +29,21 @@
 
 ## 1. 在 Host 机器启动 Molt
 
-在 **Host 的 PowerShell** 执行。Windows 没有 Git 也没关系，使用系统自带 PowerShell 下载 ZIP：
+在 **Host 的 Windows PowerShell 5.1** 复制下面完整的一行。不需要先安装 Git 或 Python，也不要拆行或替换其中内容：
 
 ```powershell
-$zip = Join-Path $env:TEMP 'molt-agent-drop.zip'
-$tmp = Join-Path $env:TEMP 'molt-agent-drop-extract'
-$dest = Join-Path $HOME 'molt-agent-drop'
-if (Test-Path $dest) { throw "目录已存在，请确认后换目录： $dest" }
-Invoke-WebRequest 'https://github.com/zhou-zhou-1001/molt-agent-drop/archive/refs/heads/main.zip' -OutFile $zip
-if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-Expand-Archive $zip -DestinationPath $tmp -Force
-Move-Item (Join-Path $tmp 'molt-agent-drop-main') $dest
-Remove-Item $zip -Force
-Set-Location $dest
-.\molt.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";$s=$c.DownloadString($u);$c.Dispose();if($s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};&([ScriptBlock]::Create($s))'
 ```
 
-如果脚本执行策略阻止运行，只对当前 PowerShell 窗口临时放行：
+命令会在独立进程中临时绕过执行策略并启用 TLS 1.2；它不会修改全局策略。仓库 bootstrap 会先取得准确 commit，再校验下载状态、文件大小、ZIP 内容和 commit marker，只从随机 staging 发布完整目录。失败会立即返回非零状态，旧的 `%USERPROFILE%\molt-agent-drop` 不会被启动。
+
+网络抖动时直接重跑同一条命令。若提示 commit 目录缺少或不匹配 marker，只删除 bootstrap 自己管理的 source cache，再重跑：
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\molt.ps1
+Remove-Item -LiteralPath "$env:LOCALAPPDATA\MoltDropDemo\source" -Recurse -Force
 ```
 
-不要为了这个 Demo 修改 LocalMachine 或 CurrentUser 的全局执行策略。选择 `1. Host`，接受一个**专用、无敏感文件**的共享目录，例如：
+不要删除 `%LOCALAPPDATA%\MoltDropDemo` 整体，因为其中还可能有 runtime 和 audit state。选择 `1. Host`，接受一个**专用、无敏感文件**的共享目录，例如：
 
 ```text
 C:\MoltDemoShare
@@ -153,11 +144,10 @@ cd molt-agent-drop
 ./molt
 ```
 
-Windows：
+Windows（如果这台 Agent 机器尚未下载项目，也使用第 1 节的同一条 bootstrap 命令并选择 `2. Agent`）：
 
 ```powershell
-Set-Location molt-agent-drop
-.\molt.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";$s=$c.DownloadString($u);$c.Dispose();if($s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};&([ScriptBlock]::Create($s))'
 ```
 
 选择 `2. Agent`，填入 Host 显示的 invitation ID 和 secret。向导会访问默认地址：

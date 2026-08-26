@@ -31,6 +31,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 function Write-Fail {
   param([string]$Msg)
@@ -89,18 +90,21 @@ if (-not $Force -and (Test-Path $pythonExe) -and (Test-Path $markerFile)) {
   } catch { }
 }
 
-# --- 4. Download with multi-source fallback (curl.exe on Win10/Server 2019+) --
-$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-if (-not $curl) { Write-Fail 'curl.exe not found; cannot download pinned Python runtime' }
+# --- 4. Download with a PowerShell 5.1-compatible WebClient -------------------
 $zipOk = $false
 foreach ($url in $sources) {
   Write-Host "MoltBootstrap: downloading $url"
   Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
-  & $curl.Source -L --fail --silent --show-error --connect-timeout 15 --max-time 120 -o $zipPath $url
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "MoltBootstrap: source failed (curl exit $LASTEXITCODE); trying next"
+  try {
+    $client = New-Object Net.WebClient
+    $client.Headers['User-Agent'] = 'Molt-Agent-Drop-Python-Bootstrap'
+    $client.DownloadFile($url, $zipPath)
+  } catch {
+    Write-Host "MoltBootstrap: source failed ($($_.Exception.Message)); trying next"
     Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
     continue
+  } finally {
+    if ($client) { $client.Dispose(); $client = $null }
   }
   if (-not (Test-Path $zipPath)) {
     Write-Host 'MoltBootstrap: source produced no file; trying next'

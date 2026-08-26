@@ -14,54 +14,36 @@ cd molt-agent-drop
 ./molt
 ```
 
-Windows PowerShell（推荐，小白无需安装 Git）：
+Windows PowerShell 5.1（推荐，不需要 Git 或 Python）：
 
 ```powershell
-$zip = Join-Path $env:TEMP 'molt-agent-drop.zip'
-$tmp = Join-Path $env:TEMP 'molt-agent-drop-extract'
-$dest = Join-Path $HOME 'molt-agent-drop'
-if (Test-Path $dest) { throw "目录已存在，请换一个目录或先确认它是旧的 Molt 目录： $dest" }
-Invoke-WebRequest 'https://github.com/zhou-zhou-1001/molt-agent-drop/archive/refs/heads/main.zip' -OutFile $zip
-if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-Expand-Archive $zip -DestinationPath $tmp -Force
-Move-Item (Join-Path $tmp 'molt-agent-drop-main') $dest
-Remove-Item $zip -Force
-Set-Location $dest
-.\\molt.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";$s=$c.DownloadString($u);$c.Dispose();if($s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};&([ScriptBlock]::Create($s))'
 ```
 
-如果 PowerShell 提示禁止运行脚本，只对当前窗口临时放行，不要改全局策略：
+整条命令只有一行，没有需要替换的占位符。它只为这个子进程临时使用 `Bypass`，不会修改系统或用户的执行策略。`bootstrap.ps1` 会设置 TLS 1.2，解析 GitHub `main` 的 40 位 commit，按该 commit 下载 ZIP，检查 HTTP 状态、长度、ZIP 根目录和必需文件，再从随机 staging 目录发布到：
+
+```text
+%LOCALAPPDATA%\MoltDropDemo\source\<40-character-commit>
+```
+
+目录里的 `.molt-source.json` 记录 repository、commit 和 ZIP SHA-256；只有 marker 与目录 commit 一致才会启动向导。旧的 `%USERPROFILE%\molt-agent-drop` 不会被使用。任何下载、校验、解压或 Python 准备失败都会以非零状态立即停止，不会继续进入下一步。
+
+失败后先直接重跑同一条命令；随机 staging 会被自动清理。若错误明确提示某个 commit 目录 marker 不匹配，可只清理 bootstrap 管理的 source cache 后重跑（不会删除共享目录或 audit state）：
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\\molt.ps1
+Remove-Item -LiteralPath "$env:LOCALAPPDATA\MoltDropDemo\source" -Recurse -Force
 ```
 
-如果你已经安装 Git，也可以使用：
-
-```powershell
-git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
-Set-Location molt-agent-drop
-.\\molt.ps1
-```
-
-注意：正确文件名是 `molt.ps1`，不是 `molt.ps1cc`。向导会先问你是哪一端：
+向导会先问你是哪一端：
 
 - **Host**：选择专用共享目录，自动准备已校验的 Python，启动 Host，并显示一次性 invitation。
 - **Agent**：输入 Host 给你的 invitation，发起配对；Host Owner 仍必须明确批准 request id。
 
-向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。两台电脑之间仍需先按 [跨机器步骤](docs/demo-cross-machine.md) 建立已核验的 SSH tunnel。向导是 Demo 的友好入口，不是生产安装器。Windows 的 `molt.ps1` 会自动准备固定版本 Python；macOS/Linux 的统一入口要求本机已有 Python 3。
-
-如果 PowerShell 阻止本地脚本，**不要**为了运行它而降低全局执行策略；请在当前终端临时使用：
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\\molt.ps1
-```
+向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。两台电脑之间仍需先按 [跨机器步骤](docs/demo-cross-machine.md) 建立已核验的 SSH tunnel。向导是 Demo 的友好入口，不是生产安装器。Windows 的 Host 和 Agent 分支都会自动准备固定版本 Python；macOS/Linux 的统一入口要求本机已有 Python 3。
 
 ## 自动获取 Python（bootstrap）
 
-目标机没有 Python 也不怕：`bootstrap_python.ps1` 会自动检测 `py`/`python`，没有则下载**固定版本**（默认 3.13.15 amd64）官方 embeddable 包到私有目录（`%LOCALAPPDATA%\MoltDropDemo\runtime`），**强制 SHA-256 校验**（多源 fallback：npmmirror → 华为云 → python.org，任一源下载后哈希不符即删除并换源，全部失败则 fail-closed），解压后修正 `python._pth` 并自检标准库，幂等（已验证的 runtime 直接复用）。不改 PATH、不写注册表、不做全局安装。
+目标机没有 Python 也不怕：`bootstrap_python.ps1` 会自动检测 `py`/`python`，没有则用 PowerShell 5.1 自带的 `WebClient` 下载**固定版本**（默认 3.13.15 amd64）官方 embeddable 包到私有目录（`%LOCALAPPDATA%\MoltDropDemo\runtime`），**强制 SHA-256 校验**（多源 fallback，任一源下载后哈希不符即删除并换源，全部失败则 fail-closed），解压后修正 `python._pth` 并自检标准库，幂等（已验证的 runtime 直接复用）。不依赖 `curl.exe`，不改 PATH、不写注册表、不做全局安装。
 
 ## 能力与配对
 
