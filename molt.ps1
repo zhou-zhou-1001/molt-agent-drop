@@ -1,4 +1,4 @@
-# Molt Drop first-run terminal wizard.
+﻿# Molt Drop first-run terminal wizard.
 # This script intentionally guides; it does not open firewall ports or bypass SSH host-key checks.
 [CmdletBinding()]
 param(
