@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.DS_Store
+*.log
+*.tmp
+*.claimed
+owner_cmd.txt
+molt-state/
+MoltDemoShare/
