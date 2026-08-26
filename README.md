@@ -47,7 +47,7 @@ Remove-Item -LiteralPath "$env:LOCALAPPDATA\MoltDropDemo\source" -Recurse -Force
 
 ## 能力与配对
 
-Host 只开放结构化 `list`、读取 UTF-8 普通文本、排他 `create`。不支持覆盖、删除、shell、GUI、浏览器、摄像头、桌面控制或公网 Relay。
+Host 只开放结构化 `list`、读取 UTF-8 普通文本、排他 `create`。不支持覆盖、删除、shell、GUI、浏览器、摄像头、桌面控制或公网 Relay。诊断能力默认关闭；只有显式加入 `--enable-diagnostics`（Windows 启动脚本为 `-EnableDiagnostics`）才启用固定 catalog，且每项都必须由 Host Owner 单独批准。
 
 启动 Host（Windows 推荐用脚本）：
 
@@ -56,12 +56,34 @@ Set-Location C:\demo\molt
 .\run_drop_host.ps1 -Root C:\MoltDemoShare -StateDir "$env:LOCALAPPDATA\MoltDropDemo" -Port 8765
 ```
 
+如需本轮结构化诊断演示，显式加入开关；不加则保持关闭：
+
+```powershell
+.\run_drop_host.ps1 -Root C:\MoltDemoShare -StateDir "$env:LOCALAPPDATA\MoltDropDemo" -Port 8765 -EnableDiagnostics
+```
+
 `-Root` 是 owner 明确指定/创建的专用目录。程序拒绝 filesystem/drive root、用户 home/profile 和 link/reparse root。audit 位于 root 外的私有 state directory。
 
 Agent 通过 tunnel URL 发起请求：
 
 ```powershell
 py -3 drop_client.py --url http://127.0.0.1:18765 pair --invitation-id ID --invitation-secret SECRET --label demo-agent
+```
+
+Host 控制台出现 request id 后，owner 必须现场输入：
+
+诊断请求的批准/拒绝使用独立命令，不复用配对批准：
+
+```text
+approve-diagnostic DIAGNOSTIC_REQUEST_ID
+deny-diagnostic DIAGNOSTIC_REQUEST_ID
+```
+
+Agent 端可使用固定 catalog 命令（仅空参数）：
+
+```powershell
+py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN diagnostic-request system.identity
+py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN diagnostic-status DIAGNOSTIC_REQUEST_ID
 ```
 
 Host 控制台出现 request id 后，owner 必须现场输入：

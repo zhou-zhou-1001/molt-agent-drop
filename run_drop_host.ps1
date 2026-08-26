@@ -3,7 +3,8 @@ param(
   [string]$StateDir = (Join-Path $env:LOCALAPPDATA 'MoltDropDemo'),
   [int]$Port = 8765,
   [double]$InviteTtl = 10,
-  [double]$SessionTtl = 60
+  [double]$SessionTtl = 60,
+  [switch]$EnableDiagnostics
 )
 $ErrorActionPreference = 'Stop'
 # Resolve a working Python: reuse an existing one, or download the pinned
@@ -26,6 +27,7 @@ if (-not (Test-Path $moltPth) -or ((Get-Content $moltPth -Raw).Trim() -ne $PSScr
 }
 $hostScript = Join-Path $PSScriptRoot 'drop_host.py'
 $args = @($hostScript, '--root', $Root, '--create-root', '--state-dir', $StateDir, '--port', $Port, '--invite-ttl', $InviteTtl, '--session-ttl', $SessionTtl)
+if ($EnableDiagnostics) { $args += '--enable-diagnostics' }
 Write-Host "Molt Drop Demo binds only 127.0.0.1; root=$Root; audit=$StateDir"
 & $python.FullName @args
 exit $LASTEXITCODE

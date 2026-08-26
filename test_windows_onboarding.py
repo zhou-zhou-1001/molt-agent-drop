@@ -68,6 +68,17 @@ class WindowsOnboardingTests(unittest.TestCase):
         self.assertIn("& $python $client", script)
         self.assertNotIn("Agent requires Python 3", script)
 
+    def test_diagnostics_are_explicitly_opt_in_at_all_host_entries(self):
+        ps = (ROOT / "molt.ps1").read_text(encoding="ascii")
+        runner = (ROOT / "run_drop_host.ps1").read_text(encoding="ascii")
+        wizard = (ROOT / "molt_wizard.py").read_text(encoding="utf-8")
+        self.assertIn("[switch]$EnableDiagnostics", ps)
+        self.assertIn("-EnableDiagnostics", ps)
+        self.assertIn("[switch]$EnableDiagnostics", runner)
+        self.assertIn("--enable-diagnostics", runner)
+        self.assertIn('p.add_argument("--enable-diagnostics", action="store_true")', wizard)
+        self.assertIn('command.append("--enable-diagnostics")', wizard)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

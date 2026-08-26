@@ -34,7 +34,23 @@ def _diagnostic_environment():
     allowed=("PATH","SystemRoot","WINDIR","COMSPEC","PATHEXT","HOME","USERPROFILE","APPDATA","LOCALAPPDATA","TEMP","TMP","LANG","LC_ALL")
     return {name:os.environ[name] for name in allowed if name in os.environ}
 
-def _run_fixed_diagnostic(argv,cwd):
+def _terminate_diagnostic_process(proc):
+    if proc is None or proc.poll() is not None:return
+    if os.name!="nt":
+        try:os.killpg(proc.pid,signal.SIGKILL)
+        except (ProcessLookupError,OSError):
+            try:proc.kill()
+            except OSError:pass
+        return
+    taskkill=os.path.join(os.environ.get("SystemRoot",r"C:\Windows"),"System32","taskkill.exe")
+    try:
+        subprocess.run((taskkill,"/PID",str(proc.pid),"/T","/F"),stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=5,shell=False)
+    except (OSError,subprocess.SubprocessError):
+        try:proc.kill()
+        except OSError:pass
+
+def _run_fixed_diagnostic(argv,cwd,on_started=None,on_finished=None):
     env=_diagnostic_environment(); executable=shutil.which(argv[0],path=env.get("PATH",os.defpath))
     if not executable: raise FileNotFoundError("diagnostic executable unavailable")
     fixed_argv=(executable,)+tuple(argv[1:]); chunks=[]; size=[0]; output_lock=threading.Lock(); truncated=[False]
@@ -50,31 +66,19 @@ def _run_fixed_diagnostic(argv,cwd):
     creationflags=getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0) if os.name=="nt" else 0
     proc=subprocess.Popen(fixed_argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
         cwd=str(cwd),env=env,shell=False,creationflags=creationflags,start_new_session=os.name!="nt")
+    if on_started:on_started(proc)
     reader=threading.Thread(target=drain,args=(proc.stdout,),daemon=True);reader.start();timed_out=False
     try:proc.wait(timeout=DIAGNOSTIC_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         timed_out=True
-        if os.name!="nt":
-            try:os.killpg(proc.pid,signal.SIGKILL)
-            except ProcessLookupError:pass
-        else:
-            # CREATE_NEW_PROCESS_GROUP is not sufficient to kill descendants;
-            # use the OS process-tree terminator on timeout and fail closed if
-            # it cannot be invoked.
-            taskkill=os.path.join(os.environ.get("SystemRoot",r"C:\\Windows"),"System32","taskkill.exe")
-            try:
-                subprocess.run((taskkill,"/PID",str(proc.pid),"/T","/F"),stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True,timeout=5,
-                    shell=False)
-            except (OSError,subprocess.SubprocessError):
-                try:proc.kill()
-                except OSError:pass
+        _terminate_diagnostic_process(proc)
         proc.wait()
     reader.join(timeout=2)
     if reader.is_alive():
         # A descendant retaining stdout cannot make completion unbounded; fail closed.
         proc.stdout.close();reader.join(timeout=1);truncated[0]=True
     output=_redact_diagnostic_text(b"".join(chunks).decode("utf-8",errors="replace"))
+    if on_finished:on_finished(proc)
     return {"exit_code":proc.returncode,"output":output,"timed_out":timed_out,"truncated":truncated[0]}
 
 def is_link(path):
@@ -121,7 +125,7 @@ class HostState:
         self.audit_path=self.state_dir/"audit.jsonl"; self.invite_ttl=invite_ttl*60; self.invite_id=secrets.token_urlsafe(18); self.invite_secret=secrets.token_urlsafe(32)
         self.invite_hash=digest(self.invite_secret); self.invite_deadline=time.monotonic()+self.invite_ttl; self.session_ttl=session_ttl*60
         self.pending={}; self.invite_consumed=False; self.claimed_request_id=None; self.token_hash=None; self.session_deadline=None
-        self.enable_diagnostics=bool(enable_diagnostics); self.diagnostic_requests={}
+        self.enable_diagnostics=bool(enable_diagnostics); self.diagnostic_requests={}; self.active_diagnostic_processes={}
         self.revoked=False; self.frozen=False; self.lock=threading.RLock(); self.server=None; self.stopping=False
         self.audit("host_start","system","allowed",{"root":str(self.root)})
 
@@ -202,7 +206,14 @@ class HostState:
         with self.lock:
             # Revocation remains fail-safe even if its audit write is unavailable.
             self.revoked=True; self.token_hash=None
+            for proc in tuple(self.active_diagnostic_processes.values()):_terminate_diagnostic_process(proc)
             self.audit("revoke","session","allowed",{"reason":reason})
+
+    def freeze(self,reason="owner freeze"):
+        with self.lock:
+            self.frozen=True
+            for proc in tuple(self.active_diagnostic_processes.values()):_terminate_diagnostic_process(proc)
+            self.audit("freeze","session","allowed",{"reason":reason})
 
     def request_diagnostic(self,command,args,token):
         with self.lock:
@@ -270,7 +281,11 @@ class HostState:
                 item["status"]="failed";item["result"]={"error":"execution audit failed"};return
             item["status"]="running"
         try:
-            result=_run_fixed_diagnostic(argv,self.state_dir)
+            def started(proc):
+                with self.lock:self.active_diagnostic_processes[rid]=proc
+            def finished(proc):
+                with self.lock:self.active_diagnostic_processes.pop(rid,None)
+            result=_run_fixed_diagnostic(argv,self.state_dir,started,finished)
             status="completed" if not result["timed_out"] and result["exit_code"]==0 else "failed"
         except (OSError,ValueError) as e:
             result={"error":str(e)};status="failed"
@@ -398,7 +413,7 @@ def owner_console(host):
             elif cmd=="deny-diagnostic":host.deny_diagnostic(arg);print("Diagnostic denied.",flush=True)
             elif cmd=="new-invite":print_invitation(host)
             elif cmd=="revoke":host.revoke();print("Revoked.",flush=True)
-            elif cmd=="freeze":host.frozen=True;host.audit("freeze","session","allowed");print("Frozen.",flush=True)
+            elif cmd=="freeze":host.freeze();print("Frozen.",flush=True)
             elif cmd=="status":print(json.dumps({k:v["status"] for k,v in host.pending.items()}),flush=True)
             elif cmd:print("Unknown owner command.",flush=True)
         except (ValueError,OSError) as e:print("Owner action failed: "+str(e),flush=True)
@@ -470,7 +485,7 @@ def _run_owner_line(host,line):
         if cmd=="deny-diagnostic":host.deny_diagnostic(arg);print("Diagnostic denied %s."%arg,flush=True);return True
         if cmd=="new-invite":print_invitation(host);return True
         if cmd=="revoke":host.revoke();print("Revoked.",flush=True);return True
-        if cmd=="freeze":host.frozen=True;host.audit("freeze","session","allowed");print("Frozen.",flush=True);return True
+        if cmd=="freeze":host.freeze();print("Frozen.",flush=True);return True
         if cmd=="status":print(json.dumps({k:v["status"] for k,v in host.pending.items()}),flush=True);return True
         raise ValueError("unknown owner command")
     except (ValueError,OSError) as e:

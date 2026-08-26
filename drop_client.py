@@ -23,6 +23,8 @@ def main():
     ls=sub.add_parser("list");ls.add_argument("path",nargs="?",default=".")
     read=sub.add_parser("read");read.add_argument("path")
     create=sub.add_parser("create");create.add_argument("path");create.add_argument("--content",required=True)
+    diag=sub.add_parser("diagnostic-request");diag.add_argument("command",choices=("system.identity","openclaw.which","openclaw.version","wsl.status","network.check"))
+    ds=sub.add_parser("diagnostic-status");ds.add_argument("request_id")
     a=p.parse_args();c=Client(a.url,a.token)
     if a.op=="pair":
         result=c.call("POST","/pair/request",{"invitation_id":a.invitation_id,"invitation_secret":a.invitation_secret,"label":a.label},False);rid=result["request_id"]
@@ -32,9 +34,12 @@ def main():
             if result["status"]=="approved":print("MOLT_SESSION_TOKEN="+result["token"]);print("Copy the complete token above; do not use a visually truncated value.");return
             if result["status"]!="pending":raise SystemExit("Pairing "+result["status"])
         raise SystemExit("Timed out waiting for owner approval")
-    query=lambda path:"?"+urllib.parse.urlencode({"path":path})
-    if a.op=="list":result=c.call("GET","/files/list"+query(a.path))
-    elif a.op=="read":result=c.call("GET","/files/read"+query(a.path))
-    else:result=c.call("POST","/files/create",{"path":a.path,"content":a.content})
+    if a.op=="diagnostic-request":result=c.call("POST","/diagnostics/request",{"command":a.command,"args":{}})
+    elif a.op=="diagnostic-status":result=c.call("POST","/diagnostics/status",{"request_id":a.request_id})
+    else:
+        query=lambda path:"?"+urllib.parse.urlencode({"path":path})
+        if a.op=="list":result=c.call("GET","/files/list"+query(a.path))
+        elif a.op=="read":result=c.call("GET","/files/read"+query(a.path))
+        else:result=c.call("POST","/files/create",{"path":a.path,"content":a.content})
     print(json.dumps(result,ensure_ascii=False,indent=2))
 if __name__=="__main__":main()

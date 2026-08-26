@@ -5,7 +5,8 @@ param(
   [ValidateSet('','host','agent')][string]$Role = '',
   [string]$Root = '',
   [string]$StateDir = '',
-  [int]$Port = 8765
+  [int]$Port = 8765,
+  [switch]$EnableDiagnostics
 )
 $ErrorActionPreference = 'Stop'
 
@@ -55,7 +56,9 @@ if ($Role -eq 'host') {
   Header 'Host starting'
   Write-Host 'After startup, transfer MOLT_INVITATION_ID and SECRET to the Agent operator through a trusted channel.' -ForegroundColor Green
   Write-Host 'Host listens only on 127.0.0.1; next, create a verified SSH tunnel as documented.' -ForegroundColor Yellow
-  & (Join-Path $here 'run_drop_host.ps1') -Root $Root -StateDir $StateDir -Port $Port
+  $hostArgs = @('-Root', $Root, '-StateDir', $StateDir, '-Port', $Port)
+  if ($EnableDiagnostics) { $hostArgs += '-EnableDiagnostics' }
+  & (Join-Path $here 'run_drop_host.ps1') @hostArgs
   exit $LASTEXITCODE
 }
 

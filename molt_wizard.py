@@ -27,9 +27,12 @@ def run_host(args: argparse.Namespace) -> int:
     if not python:
         print("未找到 Python 3。请安装 Python 3 后重新运行。", file=sys.stderr)
         return 1
-    return subprocess.call([python, str(HERE / "drop_host.py"), "--root", root,
+    command = [python, str(HERE / "drop_host.py"), "--root", root,
                             "--create-root", "--state-dir", state,
-                            "--port", str(args.port)])
+                            "--port", str(args.port)]
+    if args.enable_diagnostics:
+        command.append("--enable-diagnostics")
+    return subprocess.call(command)
 
 def run_agent(args: argparse.Namespace) -> int:
     header("Agent 设置")
@@ -57,6 +60,7 @@ def main() -> int:
     p.add_argument("--root", default="")
     p.add_argument("--state-dir", default="")
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--enable-diagnostics", action="store_true")
     p.add_argument("--url", default="")
     p.add_argument("--invitation-id", default="")
     p.add_argument("--invitation-secret", default="")
