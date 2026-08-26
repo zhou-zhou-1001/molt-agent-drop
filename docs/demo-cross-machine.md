@@ -1,60 +1,209 @@
-# 明日跨机器现场步骤（Windows Host）
+# Molt Drop 跨机器实机演示（推荐路径）
 
-假设：Windows 是文件 Host；Agent 机器运行 SSH server，并能被 Windows 登录。下面的 `18765` 是 Agent 机器上的 tunnel 端口，`8765` 是 Windows Host 本地端口。
+本文只给一条推荐路径：**Agent 机器执行 SSH 本地转发，Host 继续只监听本机回环地址**。
 
-## 1. 预先核验 SSH host key（必须）
+```text
+┌────────────── Agent 机器 ──────────────┐
+│ SSH client                             │
+│ 127.0.0.1:18765  ───── SSH ─────┐      │
+│ drop_client.py                   │      │
+└──────────────────────────────────┼──────┘
+                                   │
+                         127.0.0.1:8765
+┌────────────── Host 机器 ─────────┴──────┐
+│ drop_host.py                            │
+│ 专用共享目录 + 审计日志                 │
+└─────────────────────────────────────────┘
+```
 
-在现场连接前，通过可信的独立渠道向 Agent 机器管理员取得 SSH host-key 指纹（例如当面查看 Agent 机器的 `ssh-keygen -lf` 输出），逐字符核对。不得使用 `StrictHostKeyChecking=no`、`accept-new`，也不得在首次连接提示中盲目输入 yes。
+**不要把 8765 或 18765 开到公网，不要关闭防火墙，不要使用 `StrictHostKeyChecking=no`。**
 
-将已核验的 key 写入专用 known-hosts 文件。可先由可信渠道取得完整公钥行，再保存为：
+## 0. 先准备两台机器
+
+- **Host**：文件所在电脑。下面示例是 Windows。
+- **Agent**：运行 Agent 的电脑，可以是 macOS、Linux 或另一台 Windows。
+- Host 必须有可用的 SSH Server，Agent 必须有 `ssh` 客户端。
+- 你需要知道 Host 的 SSH 用户名、地址，以及 Host SSH 公钥的指纹。
+
+如果只是两台同一局域网电脑，也仍然建议走 SSH，不要改成明文 LAN HTTP。
+
+## 1. 在 Host 机器启动 Molt
+
+在 **Host 的 PowerShell** 执行：
+
+```powershell
+git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
+Set-Location molt-agent-drop
+.\molt.ps1
+```
+
+选择 `1. Host`，接受一个**专用、无敏感文件**的共享目录，例如：
+
+```text
+C:\MoltDemoShare
+```
+
+不要选择桌面、整个用户目录、下载目录、项目目录或真实业务目录。
+
+向导会自动准备 Python 并启动 Host。记下屏幕上的三项信息：
+
+```text
+MOLT_URL=http://127.0.0.1:8765
+MOLT_INVITATION_ID=...
+MOLT_INVITATION_SECRET=...
+```
+
+Host 窗口必须保持打开。Host 端口只绑定 `127.0.0.1`，不需要开放入站 8765。
+
+## 2. 独立核对 Host 的 SSH host key（必须）
+
+在 Host 上查看 SSH 公钥指纹。Windows PowerShell 示例：
+
+```powershell
+ssh-keygen -lf "$env:ProgramData\ssh\ssh_host_ed25519_key.pub"
+```
+
+通过可信的独立渠道把**指纹**交给 Agent 操作者。第一次 SSH 连接时，只有屏幕指纹完全一致才继续。
+
+不要使用：
+
+```text
+-o StrictHostKeyChecking=no
+-o UserKnownHostsFile=/dev/null
+```
+
+## 3. 在 Agent 机器建立本地 SSH tunnel
+
+这一条命令必须在 **Agent 机器**执行，不是在 Host 执行。
+
+### macOS / Linux
+
+```bash
+mkdir -p ~/.ssh
+ssh-keyscan -t ed25519 HOST_ADDRESS
+# 仅在与可信渠道提供的指纹核对一致后，才把完整公钥行写入专用文件：
+# ~/.ssh/molt_demo_known_hosts
+
+ssh -N -T \
+  -o ExitOnForwardFailure=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$HOME/.ssh/molt_demo_known_hosts" \
+  -L 127.0.0.1:18765:127.0.0.1:8765 \
+  HOST_USER@HOST_ADDRESS
+```
+
+### Windows PowerShell
+
+先建立专用 known-hosts 文件，并把已经独立核对过的 Host 公钥行放入其中，例如：
 
 ```powershell
 $KnownHosts = "$env:USERPROFILE\.ssh\molt_demo_known_hosts"
-# 将已独立核验的“agent.example ssh-ed25519 AAAA...”写入 $KnownHosts
-ssh-keygen -lf $KnownHosts
 ```
 
-确认这里显示的指纹与可信渠道完全一致。若不一致，停止演示并调查。
-
-## 2. Windows 启动 Host
+然后在 **Agent 的 PowerShell** 执行：
 
 ```powershell
-Set-Location C:\demo\molt
-.\run_drop_host.ps1 -Root C:\MoltDemoShare -StateDir "$env:LOCALAPPDATA\MoltDropDemo" -Port 8765 -InviteTtl 10 -SessionTtl 60
+ssh -N -T `
+  -o ExitOnForwardFailure=yes `
+  -o StrictHostKeyChecking=yes `
+  -o "UserKnownHostsFile=$KnownHosts" `
+  -L 127.0.0.1:18765:127.0.0.1:8765 `
+  HOST_USER@HOST_ADDRESS
 ```
 
-Host 固定监听 `127.0.0.1`，不绑定 `0.0.0.0`，无需也不应修改防火墙。记录屏幕上的 invitation id/secret，通过现场可信方式交给 Agent 操作者。
+输入 Host 的 SSH 凭据后，这个窗口保持打开。不要把 `127.0.0.1:18765` 改成 `0.0.0.0:18765`。
 
-## 3. 用户显式建立 reverse tunnel
+验证 tunnel 是否通了：在 **Agent 机器**执行：
 
-在 Windows 新开 PowerShell，使用已经核验的专用 known-hosts 文件：
+```bash
+curl http://127.0.0.1:18765/health
+```
+
+Windows 没有 curl 时：
 
 ```powershell
-ssh -N -T -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KnownHosts" -R 127.0.0.1:18765:127.0.0.1:8765 demo-user@agent.example
+Invoke-WebRequest http://127.0.0.1:18765/health
 ```
 
-保持窗口打开。`-R` 令 Agent 机器的 `127.0.0.1:18765` 转发到 Windows Host 的 `127.0.0.1:8765`。SSH server 必须允许 remote forwarding；不要设置 GatewayPorts，也不要把 remote bind address 改成 `0.0.0.0`。
+看到 JSON 健康状态后再继续。
 
-## 4. Agent 请求、owner 批准、演示文件操作
+## 4. 在 Agent 机器运行向导并配对
 
-Agent 机器：
+保持 SSH tunnel 窗口打开，另开一个 **Agent 终端**：
+
+macOS / Linux：
+
+```bash
+cd molt-agent-drop
+./molt
+```
+
+Windows：
 
 ```powershell
-py -3 drop_client.py --url http://127.0.0.1:18765 pair --invitation-id ID --invitation-secret SECRET --label stage-agent
+Set-Location molt-agent-drop
+.\molt.ps1
 ```
 
-Windows Host 控制台核对 label/request id，并明确输入 `approve REQUEST_ID`。Agent 得到一次性返回的 session token 后执行：
+选择 `2. Agent`，填入 Host 显示的 invitation ID 和 secret。向导会访问默认地址：
 
-```powershell
-py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN list .
-py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN read hello.txt
-py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN create agent-result.txt --content "created through Molt demo"
+```text
+http://127.0.0.1:18765
 ```
 
-CI/无人值守验收可选择 `--owner-cmd-file`，但它只是本地自动化入口，不是生产身份认证。文件必须在私有 `-StateDir` 直属目录中，由可信本地进程写入单条、换行结尾的命令后原子 rename 发布；不要让 Agent API、授权 root 或远端共享目录接触该文件。交互演示仍优先使用控制台人工批准。
+Host 窗口会出现类似：
 
-## 5. 结束与异常处理
+```text
+Pair request pending: REQUEST_ID
+```
 
-正常结束时先在 Host 输入 `revoke`，再 Ctrl-C 停止 Host 和 SSH。若 tunnel 窗口关闭、网络中断或状态不确定，立即在 Host 输入 `freeze` 或 `revoke`。Demo 无法可靠把 SSH 断开事件关联到 session，因此不会声称自动断线撤权；TTL 与每请求状态检查是兜底。
+在 **Host 窗口**人工核对 request id 后输入：
 
-Audit 默认在 `%LOCALAPPDATA%\MoltDropDemo\audit.jsonl`，位于授权 root 外，Agent API 无法访问。
+```text
+approve REQUEST_ID
+```
+
+不要批准不认识的 label 或 request id。
+
+## 5. 在 Agent 机器验证最小能力
+
+配对成功后，只在专用共享目录里测试：
+
+```bash
+python3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN list .
+python3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN read hello.txt
+python3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN create agent-result.txt --content 'created by my agent'
+```
+
+Windows 将 `python3` 换成 `py -3` 或 `python`。`TOKEN` 只放在本机终端，不要粘贴到聊天、Issue、截图或日志。
+
+能力边界固定为：
+
+- `list`
+- 读取 UTF-8 普通文本
+- 创建不存在的新文件
+- 不覆盖已有文件
+- 不删除、不执行 shell、不控制桌面
+
+## 6. 结束流程（必须）
+
+1. 在 **Host 窗口**输入：
+
+   ```text
+   revoke
+   ```
+
+2. 确认 Agent 再访问得到 `410 revoked`。
+3. Ctrl-C 停止 Host。
+4. Ctrl-C 关闭 Agent 上的 SSH tunnel。
+5. 检查专用共享目录和 Host 状态目录，没有遗留敏感测试文件。
+
+如果 tunnel 意外断开，Host 不会把 SSH 断开自动等价为撤销；立即回到 Host 窗口输入 `freeze` 或 `revoke`。
+
+## 为什么不把 reverse tunnel 作为默认
+
+reverse tunnel 也能工作，但需要用户理解 `-R`、远端监听地址和 SSH Server 的 forwarding 策略，容易把监听地址误改成公网。Molt Demo 的小白默认路径统一使用 Agent 侧 `-L` 本地转发；只有高级用户明确理解网络拓扑时，才自行采用其他安全 tunnel 方案。
+
+## Demo 限制
+
+这是开发者预览，不是生产级 E2EE、设备身份、强沙箱或管理员/root 对抗方案。SSH tunnel 提供传输保护，但 Molt 本身的 HTTP 协议不宣称应用层 E2EE。Host 的专用目录、Windows ACL、SSH 账户和 host-key 核验仍是操作者责任。
