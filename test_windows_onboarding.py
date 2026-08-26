@@ -24,19 +24,34 @@ class WindowsOnboardingTests(unittest.TestCase):
             ".staging-",
             ".molt-source.json",
             "^[0-9a-f]{40}$",
-            "exit 1",
+            "Join-Path $installDir 'molt.ps1'",
+            "throw",
         ):
             self.assertIn(required, script)
+        self.assertNotIn("$PSScriptRoot", script)
+        self.assertNotRegex(script, r"(?m)^\s*exit\b")
 
     def test_documented_windows_launcher_is_one_line_without_placeholders(self):
         launchers = []
         for name in ("README.md", "docs/demo-cross-machine.md"):
             text = (ROOT / name).read_text(encoding="utf-8")
-            launchers.extend(re.findall(r"```powershell\n(powershell\.exe[^\n]+)\n```", text))
+            launchers.extend(
+                line
+                for line in re.findall(r"```powershell\n([^\n]+)\n```", text)
+                if "raw.githubusercontent.com" in line
+            )
         self.assertGreaterEqual(len(launchers), 2)
         for launcher in launchers:
             self.assertIn("raw.githubusercontent.com", launcher)
-            self.assertIn("-Command '$ErrorActionPreference=", launcher)
+            self.assertNotIn("powershell.exe", launcher.lower())
+            self.assertIn('$ErrorActionPreference="Stop"', launcher)
+            self.assertIn("Tls12", launcher)
+            self.assertIn("DownloadString", launcher)
+            self.assertIn("$s.Length -lt 1000", launcher)
+            self.assertIn(r'[^\x00-\x7F]', launcher)
+            self.assertIn("[ScriptBlock]::Create($s)", launcher)
+            self.assertNotRegex(launcher, r"(?i)\biex\b|Invoke-Expression")
+            self.assertNotIn("ExecutionPolicy", launcher)
             self.assertNotRegex(launcher, r"<[^>]+>")
             self.assertNotIn("`", launcher)
 

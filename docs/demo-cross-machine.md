@@ -32,10 +32,10 @@
 在 **Host 的 Windows PowerShell 5.1** 复制下面完整的一行。不需要先安装 Git 或 Python，也不要拆行或替换其中内容：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";$s=$c.DownloadString($u);$c.Dispose();if($s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};&([ScriptBlock]::Create($s))'
+$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";try{$s=$c.DownloadString($u)}finally{$c.Dispose()};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};& ([ScriptBlock]::Create($s))
 ```
 
-命令会在独立进程中临时绕过执行策略并启用 TLS 1.2；它不会修改全局策略。仓库 bootstrap 会先取得准确 commit，再校验下载状态、文件大小、ZIP 内容和 commit marker，只从随机 staging 发布完整目录。失败会立即返回非零状态，旧的 `%USERPROFILE%\molt-agent-drop` 不会被启动。
+命令直接在当前 Windows PowerShell 5.1 进程内运行，不启动子 `powershell.exe`，也不修改全局或用户执行策略。它会启用 TLS 1.2，并在下载异常、内容为空或过短、内容含非 ASCII 字符时立即停止。仓库 bootstrap 会先取得准确 commit，再校验下载状态、文件大小、ZIP 内容和 commit marker，只从随机 staging 发布完整目录。失败会立即停止，旧的 `%USERPROFILE%\molt-agent-drop` 不会被启动。
 
 网络抖动时直接重跑同一条命令。若提示 commit 目录缺少或不匹配 marker，只删除 bootstrap 自己管理的 source cache，再重跑：
 
@@ -147,7 +147,7 @@ cd molt-agent-drop
 Windows（如果这台 Agent 机器尚未下载项目，也使用第 1 节的同一条 bootstrap 命令并选择 `2. Agent`）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";$s=$c.DownloadString($u);$c.Dispose();if($s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};&([ScriptBlock]::Create($s))'
+$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";try{$s=$c.DownloadString($u)}finally{$c.Dispose()};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};& ([ScriptBlock]::Create($s))
 ```
 
 选择 `2. Agent`，填入 Host 显示的 invitation ID 和 secret。向导会访问默认地址：

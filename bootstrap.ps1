@@ -119,7 +119,8 @@ try {
     if (-not $Force -and (Read-Marker $installDir $commit)) {
       Write-Host "Molt source already verified: $installDir" -ForegroundColor Green
       & (Join-Path $installDir 'molt.ps1')
-      exit $LASTEXITCODE
+      if ($LASTEXITCODE -ne 0) { Fail "molt.ps1 failed with exit code $LASTEXITCODE." }
+      return
     }
     if (-not $Force) { Fail "target exists without a matching marker: $installDir (rerun with -Force to replace only this commit directory)." }
     Remove-Item -LiteralPath $installDir -Recurse -Force
@@ -155,8 +156,8 @@ try {
   if (-not (Read-Marker $installDir $commit)) { Fail 'published source marker validation failed.' }
   Write-Host "Molt source verified and installed: $installDir" -ForegroundColor Green
   & (Join-Path $installDir 'molt.ps1')
-  exit $LASTEXITCODE
+  if ($LASTEXITCODE -ne 0) { Fail "molt.ps1 failed with exit code $LASTEXITCODE." }
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
-  exit 1
+  throw
 }

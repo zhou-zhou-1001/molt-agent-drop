@@ -17,10 +17,10 @@ cd molt-agent-drop
 Windows PowerShell 5.1（推荐，不需要 Git 或 Python）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";$s=$c.DownloadString($u);$c.Dispose();if($s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};&([ScriptBlock]::Create($s))'
+$ErrorActionPreference="Stop";[Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12;$u="https://raw.githubusercontent.com/zhou-zhou-1001/molt-agent-drop/main/bootstrap.ps1";$c=New-Object Net.WebClient;$c.Headers["User-Agent"]="Molt-Agent-Drop-Launcher";try{$s=$c.DownloadString($u)}finally{$c.Dispose()};if([string]::IsNullOrEmpty($s) -or $s.Length -lt 1000 -or $s -match "[^\x00-\x7F]"){throw "Invalid bootstrap download"};& ([ScriptBlock]::Create($s))
 ```
 
-整条命令只有一行，没有需要替换的占位符。它只为这个子进程临时使用 `Bypass`，不会修改系统或用户的执行策略。`bootstrap.ps1` 会设置 TLS 1.2，解析 GitHub `main` 的 40 位 commit，按该 commit 下载 ZIP，检查 HTTP 状态、长度、ZIP 根目录和必需文件，再从随机 staging 目录发布到：
+整条命令只有一行，没有需要替换的占位符。请直接粘贴到已经打开的 Windows PowerShell 5.1；它在当前进程内下载并执行 bootstrap，不启动子 `powershell.exe`，也不修改系统或用户的执行策略。launcher 会让错误立即停止、启用 TLS 1.2，并在执行前拒绝空白、过短或非 ASCII 的下载内容。`bootstrap.ps1` 会再次设置 TLS 1.2，解析 GitHub `main` 的 40 位 commit，按该 commit 下载 ZIP，检查 HTTP 状态、长度、ZIP 根目录和必需文件，再从随机 staging 目录发布到：
 
 ```text
 %LOCALAPPDATA%\MoltDropDemo\source\<40-character-commit>
