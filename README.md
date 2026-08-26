@@ -4,7 +4,17 @@
 
 ## 小白从这里开始：终端向导
 
-不要先读完整文档。Host 和 Agent 都可以先运行向导：
+不要先读完整文档。Host 和 Agent 都可以先运行统一向导：
+
+macOS / Linux / Git Bash：
+
+```bash
+git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
+cd molt-agent-drop
+./molt
+```
+
+Windows PowerShell：
 
 ```powershell
 git clone https://github.com/zhou-zhou-1001/molt-agent-drop.git
@@ -17,7 +27,7 @@ cd molt-agent-drop
 - **Host**：选择专用共享目录，自动准备已校验的 Python，启动 Host，并显示一次性 invitation。
 - **Agent**：输入 Host 给你的 invitation，发起配对；Host Owner 仍必须明确批准 request id。
 
-向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。两台电脑之间仍需先按 [跨机器步骤](docs/demo-cross-machine.md) 建立已核验的 SSH tunnel。向导是 Demo 的友好入口，不是生产安装器。
+向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。两台电脑之间仍需先按 [跨机器步骤](docs/demo-cross-machine.md) 建立已核验的 SSH tunnel。向导是 Demo 的友好入口，不是生产安装器。Windows 的 `molt.ps1` 会自动准备固定版本 Python；macOS/Linux 的统一入口要求本机已有 Python 3。
 
 如果 PowerShell 阻止本地脚本，**不要**为了运行它而降低全局执行策略；请在当前终端临时使用：
 
