@@ -24,6 +24,8 @@ class WindowsOnboardingTests(unittest.TestCase):
             ".staging-",
             ".molt-source.json",
             "^[0-9a-f]{40}$",
+            "commit API unavailable",
+            "return $repoRef",
             "Join-Path $installDir 'molt.ps1'",
             "throw",
         ):
@@ -50,6 +52,9 @@ class WindowsOnboardingTests(unittest.TestCase):
             self.assertIn("Timeout=30000", launcher)
             self.assertIn("raw.githubusercontent.com", launcher)
             self.assertIn("github.com/zhou-zhou-1001/molt-agent-drop/raw", launcher)
+            self.assertIn("codeload.github.com/zhou-zhou-1001/molt-agent-drop/zip/main", launcher)
+            self.assertIn("System.IO.Compression.FileSystem", launcher)
+            self.assertIn("ZipFile", launcher)
             self.assertIn("$s.Length -lt 1000", launcher)
             self.assertIn(r'[^\x00-\x7F]', launcher)
             self.assertIn("[ScriptBlock]::Create($s)", launcher)

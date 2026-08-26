@@ -34,7 +34,12 @@ function Get-Commit {
   $url = "https://api.github.com/repos/$repoOwner/$repoName/commits/$repoRef"
   $client = New-WebClient
   try {
-    $body = $client.DownloadString($url)
+    try {
+      $body = $client.DownloadString($url)
+    } catch {
+      Write-Warning "commit API unavailable ($($_.Exception.Message)); using ref '$repoRef'"
+      return $repoRef
+    }
   } finally {
     $client.Dispose()
   }
