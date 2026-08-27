@@ -39,7 +39,7 @@ Remove-Item -LiteralPath "$env:LOCALAPPDATA\MoltDropDemo\source" -Recurse -Force
 - **Host**：选择专用共享目录，自动准备已校验的 Python，启动 Host，并显示一次性 invitation。
 - **Agent**：输入 Host 给你的 invitation，发起配对；Host Owner 仍必须明确批准 request id。
 
-向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。两台电脑之间仍需先按 [跨机器步骤](docs/demo-cross-machine.md) 建立已核验的 SSH tunnel。向导是 Demo 的友好入口，不是生产安装器。Windows 的 Host 和 Agent 分支都会自动准备固定版本 Python；macOS/Linux 的统一入口要求本机已有 Python 3。
+向导不会开放公网端口、关闭防火墙或跳过 SSH host-key 校验。不同局域网按 [跨机器步骤](docs/demo-cross-machine.md) 使用 Molt 自带管理器连接任意自建 SSH relay，不再手工拼接两条 SSH 命令。向导是 Demo 的友好入口，不是生产安装器。Windows 的 Host 和 Agent 分支都会自动准备固定版本 Python；macOS/Linux 的统一入口要求本机已有 Python 3。
 
 ## 自动获取 Python（bootstrap）
 
@@ -108,7 +108,7 @@ py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN create result.tx
 
 邀请过期或需要作废未完成的配对时，Host Owner 可输入 `new-invite`，Host 会审计并打印新的 `MOLT_INVITATION_ID` / `MOLT_INVITATION_SECRET`，重新开始一次性 10 分钟邀请窗口。Host 控制台也可输入 `revoke`、`freeze` 或按 Ctrl-C 停止。每次文件请求都会检查 session 状态和 TTL。
 
-跨机器首选路径是让 Windows Host 使用系统自带 SSH 客户端，主动连接 Agent/Mac 并建立反向隧道：`ssh -R 18765:127.0.0.1:8765 USER@MAC_ADDRESS`。这样 Host 无需安装 Windows OpenSSH Server；仍须独立核对 Mac 的 host key，且不得使用 `StrictHostKeyChecking=no`。只有无法让 Host 主动连接 Agent 时，才考虑在 Host 安装 SSH Server 并使用传统 `-L` 转发。
+跨不同局域网使用两份无凭据 JSON 和同一个管理器：Windows Host 运行 `.\run_molt_tunnel.ps1 -Config .\host-tunnel.json`，macOS/Linux Agent 运行 `python3 molt_tunnel.py agent-tunnel.json`（Windows Agent 也用 PowerShell 脚本）。它自动建立 Host→relay 的反向转发和 Agent→relay 的本地转发，检查 `/health` 并在网络断线后重连；host-key 或认证错误会停止而不是被吞掉。Relay 可以是用户控制的任意 OpenSSH 主机。
 
 跨机器完整步骤与 host-key 要求见 [docs/demo-cross-machine.md](docs/demo-cross-machine.md)。bootstrap 源自 [PythonEmbed4Win](https://github.com/jtmoon79/PythonEmbed4Win)（MIT，Copyright (c) 2022 James Thomas Moon），Molt 改造：固定版本 + 强制哈希校验 + 多源 fallback + 私有目录。
 
@@ -125,6 +125,6 @@ py -3 drop_client.py --url http://127.0.0.1:18765 --token TOKEN create result.tx
 ## 测试
 
 ```powershell
-py -3 -m py_compile drop_host.py drop_client.py test_drop.py
-py -3 -m unittest -v test_drop.py
+py -3 -m py_compile drop_host.py drop_client.py molt_tunnel.py molt_wizard.py test_drop.py test_molt_tunnel.py test_windows_onboarding.py
+py -3 -m unittest -v
 ```

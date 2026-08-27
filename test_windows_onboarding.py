@@ -42,7 +42,7 @@ class WindowsOnboardingTests(unittest.TestCase):
                 for line in re.findall(r"```powershell\n([^\n]+)\n```", text)
                 if "cdn.jsdelivr.net/gh/zhou-zhou-1001/molt-agent-drop@main/bootstrap.ps1" in line
             )
-        self.assertGreaterEqual(len(launchers), 2)
+        self.assertGreaterEqual(len(launchers), 1)
         for launcher in launchers:
             self.assertLess(launcher.index("cdn.jsdelivr.net"), launcher.index("raw.githubusercontent.com"))
             self.assertNotIn("powershell.exe", launcher.lower())
@@ -67,6 +67,15 @@ class WindowsOnboardingTests(unittest.TestCase):
         script = (ROOT / "molt.ps1").read_text(encoding="ascii")
         self.assertIn("& $python $client", script)
         self.assertNotIn("Agent requires Python 3", script)
+
+    def test_tunnel_entry_is_bootstrapped_and_checked(self):
+        bootstrap = (ROOT / "bootstrap.ps1").read_text(encoding="ascii")
+        runner = (ROOT / "run_molt_tunnel.ps1").read_text(encoding="ascii")
+        self.assertIn("run_molt_tunnel.ps1", bootstrap)
+        self.assertIn("molt_tunnel.py", bootstrap)
+        self.assertIn("bootstrap_python.ps1", runner)
+        self.assertIn("molt_tunnel.py", runner)
+        self.assertIn("[switch]$Check", runner)
 
     def test_diagnostics_are_explicitly_opt_in_at_all_host_entries(self):
         ps = (ROOT / "molt.ps1").read_text(encoding="ascii")

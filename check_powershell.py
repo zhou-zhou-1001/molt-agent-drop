@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 
-FILES = ("bootstrap.ps1", "bootstrap_python.ps1", "molt.ps1", "run_drop_host.ps1")
+FILES = ("bootstrap.ps1", "bootstrap_python.ps1", "molt.ps1", "run_drop_host.ps1", "run_molt_tunnel.ps1")
 PAIRS = {"(": ")", "[": "]", "{": "}"}
 
 

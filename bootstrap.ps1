@@ -12,7 +12,7 @@ $repoOwner = 'zhou-zhou-1001'
 $repoName = 'molt-agent-drop'
 $repoRef = 'main'
 $minimumZipBytes = 10000
-$requiredFiles = @('molt.ps1', 'bootstrap_python.ps1', 'run_drop_host.ps1', 'drop_host.py', 'drop_client.py')
+$requiredFiles = @('molt.ps1', 'bootstrap_python.ps1', 'run_drop_host.ps1', 'run_molt_tunnel.ps1', 'drop_host.py', 'drop_client.py', 'molt_tunnel.py')
 
 function Fail([string]$Message) {
   throw "Molt source bootstrap failed: $Message"
